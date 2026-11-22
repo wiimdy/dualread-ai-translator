@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { mockTranslator, shortcutHtml, shortcutPagePath, verifyPageShortcuts } from './page-shortcuts.mjs';
+import { verifyProgressivePage } from './progressive-page.mjs';
+import { readingHtml, readingPagePath, readingTranslation, verifyReadingLayout } from './reading-layout.mjs';
 
 const extensionDirectory = process.env.EXTENSION_DIR
   ? resolve(process.env.EXTENSION_DIR)
@@ -31,19 +33,21 @@ const body = `<!doctype html><meta charset="utf-8"><title>PRIVATE_TITLE</title>
 <p><a href="/PRIVATE_LINK">PRIVATE_LINK</a></p>
 <p><button id="menu">PRIVATE_MENU</button></p><input value="PRIVATE_FORM">
 <div contenteditable="true"><p>PRIVATE_EDIT</p></div>
+<section style="margin-top:110vh"><p>Look-ahead line one.</p><p>Look-ahead line two.</p></section>
 <div style="height:300vh"></div><p id="far">PRIVATE_OFFSCREEN</p>`;
 const waitOptions = { polling: 50, timeout: 6_000 };
 
 const run = async () => {
   const calls = [];
   const prefix = translated + ' ';
-  const mock = mockTranslator(prefix);
+  const mock = mockTranslator((source) => readingTranslation(source) ?? prefix + source);
+  const pages = new Map([[pagePath, body], [shortcutPagePath, shortcutHtml], [readingPagePath, readingHtml]]);
   const server = createServer(async (request, response) => {
     const pathname = request.url.split('?')[0];
-    if (request.method === 'GET' && [pagePath, shortcutPagePath].includes(pathname)) {
+    if (request.method === 'GET' && pages.has(pathname)) {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': 'fixture=PRIVATE_COOKIE',
-      }).end(pathname === pagePath ? body : shortcutHtml);
+      }).end(pages.get(pathname));
       return;
     }
     if (request.method === 'POST' && request.url === '/v1/chat/completions') {
@@ -196,6 +200,10 @@ const run = async () => {
 
     await command('all');
     await article.waitForFunction((selector) => document.querySelectorAll(selector).length >= 3, translatedBlock);
+    await article.waitForFunction((selector) => {
+      const line = document.querySelector('section p:last-of-type');
+      return Boolean(line.querySelector(selector) ?? line.nextElementSibling?.matches(selector));
+    }, translatedBlock);
     const planCalls = (await nativeCalls()).filter(({ message }) => message.action.startsWith('translate'));
     const planBatch = planCalls.find(({ message }) => message.action === 'translate-batch');
     assert.equal(planBatch?.host, 'dev.dualread.personal');
@@ -268,6 +276,8 @@ const run = async () => {
     assert.deepEqual(await worker.evaluate(() => globalThis.testRequests),
       [`${endpoint}/chat/completions`, `${endpoint}/chat/completions`]);
     await verifyPageShortcuts({ context, worker, origin: new URL(articleUrl).origin, calls, mock, prefix });
+    await verifyReadingLayout({ context, origin: new URL(articleUrl).origin, calls });
+    await verifyProgressivePage({ context, origin: new URL(articleUrl).origin, mock, calls, prefix });
     console.log('Chrome UI passed: default plan stub, opt-in paragraph and selection, bilingual rendering, deduplication, clear, and data exclusions. Only the loopback provider received HTTP translation requests.');
   } finally {
     await context?.close();

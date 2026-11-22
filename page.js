@@ -5,7 +5,7 @@
         return;
     scope.dualReadPersonalReady = true;
     const MAX_CHARS = 5000;
-    const semantic = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,figcaption,dt,dd,td,th,pre,[role="paragraph"]';
+    const semantic = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,figcaption,dt,dd,td,th,pre,[role="paragraph"],[role="heading"]';
     const exclude = ['form', 'input', 'select', 'textarea', 'button', 'script', 'style', 'template',
         'noscript', 'iframe', 'svg', 'canvas', '[contenteditable]', '[role="textbox"]', '[role="combobox"]',
         'nav', 'menu', '[role="menu"]', '[role="menuitem"]', '[role="menubar"]', '[role="toolbar"]', '[role="button"]',
@@ -20,6 +20,7 @@
     const BATCH_SIZE = 5;
     const CACHE_ITEMS = 256;
     const SCAN_BUDGET_MS = 10;
+    const VIEWPORT_NEIGHBORS = 48;
     const results = new Map();
     let notice;
     let noticeTimer;
@@ -48,9 +49,32 @@
         if (!persistent)
             noticeTimer = window.setTimeout(dismissNotice, 4500);
     };
+    // Some publishers put a visually distinct title and its body on opposite sides of a <br>.
+    const standaloneHeading = (element) => {
+        const parent = element.parentElement;
+        if (!parent || !element.matches('span,strong,b,em') || element.closest(inlineLabel))
+            return false;
+        const neighbor = (next) => {
+            let node = next ? element.nextSibling : element.previousSibling;
+            while (node && ((node instanceof Text && !node.data.trim()) ||
+                (node instanceof Element && node.matches('.llm-bilingual-translation')))) {
+                node = next ? node.nextSibling : node.previousSibling;
+            }
+            return node;
+        };
+        if (!(neighbor(true) instanceof HTMLBRElement))
+            return false;
+        const before = neighbor(false);
+        if (before && !(before instanceof HTMLBRElement))
+            return false;
+        const style = getComputedStyle(element);
+        const surrounding = getComputedStyle(parent);
+        return parseFloat(style.fontSize) > parseFloat(surrounding.fontSize) ||
+            parseFloat(style.fontWeight) > parseFloat(surrounding.fontWeight);
+    };
     const anchorFor = (element) => {
         for (let parent = element; parent && parent !== document.body; parent = parent.parentElement) {
-            if (parent.matches(semantic))
+            if (parent.matches(semantic) || standaloneHeading(parent))
                 return parent;
             if (/^(block|flow-root|flex|grid|list-item|table-cell)$/.test(getComputedStyle(parent).display))
                 return parent;
@@ -137,8 +161,12 @@
             if (parent && !parent.closest(excluded) && (node instanceof Text || node instanceof HTMLBRElement)) {
                 const anchor = page ? pageAnchor(parent) : anchorFor(parent);
                 if (anchor && (!picked || anchor === picked)) {
-                    if (node instanceof HTMLBRElement && parts.has(anchor)) {
-                        parts.set(anchor, parts.get(anchor) + '\n');
+                    const prior = parts.get(anchor);
+                    if (node instanceof HTMLBRElement && prior && node.checkVisibility({ checkVisibilityCSS: true })) {
+                        const collapse = getComputedStyle(parent).whiteSpaceCollapse;
+                        if (collapse === 'collapse' || collapse === 'preserve-breaks')
+                            prior.text = prior.text.replace(/ $/, '');
+                        prior.text += '\n';
                     }
                     else if (node instanceof Text) {
                         const begin = range.startContainer === node ? range.startOffset : 0;
@@ -146,10 +174,27 @@
                         segment.setStart(node, begin);
                         segment.setEnd(node, end);
                         if (isPainted(segment, parent, anchor, page)) {
-                            const piece = node.data.slice(begin, end);
-                            if (piece.trim() || parts.has(anchor)) {
-                                const text = (parts.get(anchor) ?? '') + piece;
-                                parts.set(anchor, text);
+                            const collapse = getComputedStyle(parent).whiteSpaceCollapse;
+                            let text = node.data.slice(begin, end);
+                            if (collapse === 'collapse')
+                                text = text.replace(/[\t\n\f\r ]+/g, ' ');
+                            if (collapse === 'preserve-breaks')
+                                text = text.replace(/[\t\f ]+/g, ' ').replace(/ ?\n ?/g, '\n');
+                            if (text.trim() || prior) {
+                                const piece = prior ?? { anchor, typography: parent, text: '', literals: new Map() };
+                                if (text.trim()) {
+                                    while (!piece.typography.contains(parent) && piece.typography.parentElement) {
+                                        piece.typography = piece.typography.parentElement;
+                                    }
+                                }
+                                const literal = parent.closest('code,kbd,samp,em,strong,i,b,mark');
+                                if (literal && anchor.contains(literal))
+                                    piece.literals.set(literal, (piece.literals.get(literal) ?? '') + text);
+                                if ((collapse === 'collapse' || collapse === 'preserve-breaks') && /[ \n]$/.test(piece.text)) {
+                                    text = text.replace(/^ /, '');
+                                }
+                                piece.text += text;
+                                parts.set(anchor, piece);
                             }
                         }
                     }
@@ -157,7 +202,11 @@
             }
             node = walker.nextNode();
         }
-        return Array.from(parts, ([anchor, text]) => ({ anchor, text: text.trim() })).filter((part) => part.text);
+        return Array.from(parts.values()).filter((piece) => {
+            if (getComputedStyle(piece.typography).whiteSpaceCollapse === 'collapse')
+                piece.text = piece.text.trim();
+            return piece.text.trim();
+        });
     };
     const selectionPieces = () => {
         const selection = window.getSelection();
@@ -165,7 +214,53 @@
             return [];
         return extract(selection.getRangeAt(0), undefined, true);
     };
-    // Keep DualRead's inside/after contract. A child also stays below its source in a row or grid.
+    const copyInlineStyle = (element, original) => {
+        const style = getComputedStyle(original);
+        Object.assign(element.style, {
+            fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight,
+            fontStyle: style.fontStyle, color: style.color, backgroundColor: style.backgroundColor,
+            borderRadius: style.borderRadius, padding: style.padding,
+        });
+    };
+    const styleResult = (item, inside) => {
+        const { anchor, node } = item;
+        const source = getComputedStyle(anchor);
+        const type = item.typography === anchor ? source : getComputedStyle(item.typography);
+        const inline = anchor.matches(inlineLabel) ||
+            (source.display === 'inline' && !anchor.matches('[role="heading"]') && !standaloneHeading(anchor));
+        const preserveSpaces = /^(preserve|break-spaces)$/.test(type.whiteSpaceCollapse);
+        const fontSize = parseFloat(type.fontSize);
+        const marginEnd = Math.max(0, parseFloat(source.marginBlockEnd) || 0);
+        const pairGap = 0.16 * fontSize;
+        const inset = Math.min(fontSize * 0.45, inside ? 6 : 9);
+        const leftAligned = source.textAlign === 'left' || (source.textAlign === 'start' && source.direction === 'ltr');
+        const compact = leftAligned && !preserveSpaces && source.writingMode === 'horizontal-tb';
+        const widthLimit = !inside && source.inlineSize.endsWith('px') ? `min(100%, ${source.inlineSize})` : '100%';
+        Object.assign(node.style, {
+            display: inline ? 'inline' : 'block',
+            whiteSpace: preserveSpaces ? type.whiteSpace : item.text.includes('\n') ? 'pre-line' : 'normal',
+            wordBreak: !preserveSpaces && type.wordBreak === 'normal' ? 'keep-all' : type.wordBreak,
+            overflowWrap: preserveSpaces ? type.overflowWrap : 'anywhere', fontFamily: type.fontFamily, fontSize: type.fontSize,
+            fontStyle: type.fontStyle, fontWeight: type.fontWeight, fontStretch: type.fontStretch,
+            fontVariationSettings: type.fontVariationSettings, lineHeight: type.lineHeight,
+            letterSpacing: type.letterSpacing, wordSpacing: type.wordSpacing, textAlign: source.textAlign,
+            textIndent: inline ? '0' : source.textIndent, writingMode: source.writingMode,
+            boxSizing: 'border-box', inlineSize: inline ? 'auto' : compact ? 'fit-content' : inside ? 'auto' : source.inlineSize,
+            maxInlineSize: inline ? 'none' : widthLimit, borderRadius: inline ? '0' : '4px',
+            color: `color-mix(in srgb, ${type.color} 94%, transparent)`,
+            backgroundColor: inline ? 'transparent' : `color-mix(in srgb, ${type.color} 5%, transparent)`,
+            marginInlineStart: inline ? '0.32em' : inside ? '0' : source.marginInlineStart,
+            marginInlineEnd: inline || inside ? '0' : source.marginInlineEnd,
+            paddingBlock: inline ? '0' : 'min(0.2em, 6px)',
+            paddingInlineStart: inline ? '0' : `calc(${inside ? '0px' : source.paddingInlineStart} + ${inset}px)`,
+            paddingInlineEnd: inline ? '0' : `calc(${inside ? '0px' : source.paddingInlineEnd} + ${inset}px)`,
+            // A sibling otherwise inherits the full original paragraph break before its translation.
+            marginBlockStart: inline ? '0' : `${inside || marginEnd <= pairGap ? pairGap : pairGap - marginEnd}px`,
+            marginBlockEnd: inline || inside ? '0' : `${Math.max(fontSize * 0.5, Math.min(marginEnd, fontSize))}px`,
+        });
+        item.inlineStyles.forEach((original, element) => copyInlineStyle(element, original));
+    };
+    // Keep DualRead's inside/after contract. A child also stays with its source in a row or grid.
     const place = (item) => {
         const { anchor, node } = item;
         if (!anchor.isConnected) {
@@ -182,35 +277,99 @@
             anchor.append(node);
         if (!inside && anchor.nextElementSibling !== node)
             anchor.after(node);
+        styleResult(item, Boolean(inside));
         if (item.observer && parent && parent !== item.parent) {
             item.observer?.disconnect();
-            item.observer.observe(parent, { childList: true });
+            for (let el = anchor; el; el = el.parentElement) {
+                item.observer.observe(el, { attributes: true, childList: el !== anchor, subtree: el === anchor,
+                    attributeFilter: ['class', 'style', 'dir', 'lang', 'theme', 'data-theme', 'data-color-mode'] });
+            }
             item.parent = parent;
         }
     };
+    let styleFrame;
+    const refreshStyles = () => {
+        if (!results.size || styleFrame !== undefined)
+            return;
+        styleFrame = requestAnimationFrame(() => {
+            styleFrame = undefined;
+            for (const item of results.values())
+                place(item);
+        });
+    };
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshStyles);
+    window.addEventListener('resize', refreshStyles);
     const resultFor = (piece, route, page = false) => {
         const previous = results.get(piece.anchor);
         if (previous) {
             previous.text = piece.text;
+            previous.literals = piece.literals;
+            previous.typography = piece.typography;
             previous.route = route;
             previous.done = false;
             place(previous);
             return previous;
         }
         const node = document.createElement('span');
+        node.className = 'llm-bilingual-translation';
+        node.lang = 'ko';
         node.dir = 'auto';
         node.setAttribute('role', 'status');
-        Object.assign(node.style, {
-            display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'normal 1rem/1.55 system-ui',
-            margin: '0.3em 0 0.7em', paddingInlineStart: '0.7em', borderInlineStart: '2px solid #409684',
-        });
-        const item = { ...piece, route, node, done: false, parent: null, observer: page ? undefined : new MutationObserver((changes) => {
-                if (changes.some((change) => Array.from(change.removedNodes).includes(piece.anchor)))
+        const item = { ...piece, route, node, done: false, parent: null, inlineStyles: new Map() };
+        if (!page)
+            item.observer = new MutationObserver((changes) => {
+                const moved = changes.some((change) => Array.from(change.removedNodes).some((removed) => removed.contains(item.anchor)));
+                if (moved)
+                    item.parent = null;
+                const restyled = changes.some((change) => change.type === 'attributes' && change.target instanceof Element &&
+                    !change.target.closest('.llm-bilingual-translation,.llm-bilingual-page-notice'));
+                if (moved || restyled)
                     place(item);
-            }) };
+            });
         results.set(piece.anchor, item);
         place(item);
         return item;
+    };
+    // Match only literals read from visible formatting in this source or selection. Model output is always text.
+    const showTranslation = (item, translation) => {
+        const matches = [];
+        const seen = new Set();
+        const identifier = /[a-zA-Z0-9_]/;
+        for (const [original, text] of item.literals) {
+            const literal = text.trim();
+            if (!literal || seen.has(literal) || !item.text.includes(literal))
+                continue;
+            seen.add(literal);
+            let start = translation.indexOf(literal);
+            while (start !== -1) {
+                const end = start + literal.length;
+                if (!(identifier.test(literal[0]) && identifier.test(translation.charAt(start - 1))) &&
+                    !(identifier.test(literal.at(-1)) && identifier.test(translation.charAt(end)))) {
+                    matches.push({ start, end, original });
+                }
+                start = translation.indexOf(literal, end);
+            }
+        }
+        matches.sort((a, b) => a.start - b.start || b.end - a.end);
+        const content = document.createDocumentFragment();
+        let offset = 0;
+        item.inlineStyles.clear();
+        for (const { start, end, original } of matches) {
+            if (start < offset)
+                continue;
+            content.append(translation.slice(offset, start));
+            const element = document.createElement(original.localName);
+            element.textContent = translation.slice(start, end);
+            item.inlineStyles.set(element, original);
+            copyInlineStyle(element, original);
+            content.append(element);
+            offset = end;
+        }
+        content.append(translation.slice(offset));
+        item.node.className = 'llm-bilingual-translation is-done';
+        item.node.replaceChildren(content);
+        item.translation = translation;
+        item.done = true;
     };
     const chunksFor = (text) => {
         const chunks = [];
@@ -277,9 +436,7 @@
                     place(item);
                     if (!piece.anchor.isConnected)
                         continue;
-                    item.node.className = 'llm-bilingual-translation is-done';
-                    item.node.textContent = translated;
-                    item.done = true;
+                    showTranslation(item, translated);
                     count++;
                 }
                 catch (error) {
@@ -317,6 +474,7 @@
         const tracked = new Set();
         const nearby = new Set();
         const desired = new Map();
+        const pieces = new WeakMap();
         const manualSources = new WeakMap();
         const subscribers = new Map();
         const waiting = new Set();
@@ -326,7 +484,8 @@
         let scanTimer;
         let active = true;
         let failed = false;
-        let first = true;
+        let started = false;
+        let initialObservation;
         let requests = 0;
         let singleOnly = false;
         const onScreen = (anchor) => {
@@ -354,32 +513,41 @@
         const render = (anchor, source, translation) => {
             if (!active || !anchor.isConnected || desired.get(anchor) !== source || anchor.closest(pageExclude))
                 return;
-            const item = resultFor({ anchor, text: source }, route, true);
-            item.node.className = 'llm-bilingual-translation is-done';
-            item.node.textContent = translation;
-            item.done = true;
+            const piece = pieces.get(anchor);
+            if (piece?.text === source)
+                showTranslation(resultFor(piece, route, true), translation);
         };
         const readSource = (anchor) => {
             if (!anchor.isConnected || anchor.closest(pageExclude))
-                return '';
+                return;
             const range = document.createRange();
             range.selectNodeContents(anchor);
-            return extract(range, anchor, true)[0]?.text ?? '';
+            return extract(range, anchor, true)[0];
         };
         // A pending full-block reply must not overwrite a user's partial selection.
         preserveSelection = ({ anchor }) => {
-            manualSources.set(anchor, desired.get(anchor) ?? readSource(anchor));
+            manualSources.set(anchor, desired.get(anchor) ?? readSource(anchor)?.text ?? '');
             unsubscribe(anchor);
         };
         const refresh = (anchor) => {
-            const text = readSource(anchor);
+            const piece = readSource(anchor);
+            const text = piece?.text ?? '';
             if (manualSources.get(anchor) === text)
                 return;
             manualSources.delete(anchor);
+            if (piece)
+                pieces.set(anchor, piece);
             if (desired.get(anchor) === text && text) {
                 const item = results.get(anchor);
-                if (item?.done && item.text === text && !item.node.isConnected)
+                if (piece && item?.done && item.text === text) {
+                    item.typography = piece.typography;
                     place(item);
+                    if (item.translation !== undefined && (item.literals.size !== piece.literals.size ||
+                        Array.from(piece.literals).some(([element, literal]) => item.literals.get(element) !== literal))) {
+                        item.literals = piece.literals;
+                        showTranslation(item, item.translation);
+                    }
+                }
                 return;
             }
             unsubscribe(anchor);
@@ -390,7 +558,7 @@
             desired.set(anchor, text);
             const current = results.get(anchor);
             if (current?.done && current.text === text && current.route === route) {
-                remember(text, current.node.textContent ?? '');
+                remember(text, current.translation ?? '');
                 place(current);
                 return;
             }
@@ -408,13 +576,19 @@
                 waiting.add(text);
             }
         };
-        const next = () => {
+        const firstVisible = () => {
+            let earliest;
+            let source;
             for (const text of waiting) {
-                const anchors = subscribers.get(text);
-                if (anchors && Array.from(anchors).some(onScreen))
-                    return text;
+                for (const anchor of subscribers.get(text) ?? []) {
+                    if (onScreen(anchor) && (!earliest ||
+                        (earliest.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_PRECEDING))) {
+                        earliest = anchor;
+                        source = text;
+                    }
+                }
             }
-            return waiting.values().next().value;
+            return source;
         };
         const fetchGroup = async (texts) => {
             let translations;
@@ -448,17 +622,21 @@
         };
         const pump = () => {
             while (active && !failed && requests < MAX_REQUESTS && waiting.size) {
+                const visible = firstVisible();
+                // Wait for observed sources before using free slots on look-ahead batches.
+                if (visible === undefined && (dirty.size || (!started && (walker || roots.size || initialObservation))))
+                    return;
                 const texts = [];
                 let length = 0;
-                while (texts.length < (first || singleOnly ? 1 : BATCH_SIZE)) {
-                    const text = next();
+                while (texts.length < (visible !== undefined || singleOnly ? 1 : BATCH_SIZE)) {
+                    const text = visible ?? waiting.values().next().value;
                     if (text === undefined || (texts.length && length + text.length > MAX_CHARS))
                         break;
                     waiting.delete(text);
                     texts.push(text);
                     length += text.length;
                 }
-                first = false;
+                started = true;
                 requests++;
                 void fetchGroup(texts).catch((error) => {
                     if (!active || failed)
@@ -478,6 +656,8 @@
             const visibleFirst = entries.filter((entry) => entry.isIntersecting && onScreen(entry.target));
             for (const { target, isIntersecting } of [...visibleFirst, ...entries]) {
                 const anchor = target;
+                if (anchor === initialObservation)
+                    initialObservation = undefined;
                 if (isIntersecting) {
                     nearby.add(anchor);
                     dirty.add(anchor);
@@ -493,6 +673,8 @@
                 return;
             if (!tracked.has(anchor)) {
                 tracked.add(anchor);
+                if (!started)
+                    initialObservation = anchor;
                 visibility.observe(anchor);
             }
         };
@@ -515,8 +697,6 @@
                     dirty.delete(anchor);
                     if (nearby.has(anchor))
                         refresh(anchor);
-                    if (first && waiting.size && onScreen(anchor))
-                        pump();
                     continue;
                 }
                 if (!walker) {
@@ -534,14 +714,13 @@
                 else if (text.parentElement)
                     track(text.parentElement);
             } while (performance.now() < deadline);
-            // During first discovery at a deep scroll position, wait for an on-screen
-            // source before spending the first request on a look-ahead block.
-            if (!first || (!walker && !roots.size && !dirty.size))
-                pump();
+            pump();
             if (walker || roots.size || dirty.size)
                 schedule();
         }
         const forget = (anchor) => {
+            if (anchor === initialObservation)
+                initialObservation = undefined;
             tracked.delete(anchor);
             visibility.unobserve(anchor);
             nearby.delete(anchor);
@@ -599,22 +778,26 @@
                 schedule();
         });
         changed.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true,
-            attributeFilter: ['hidden', 'inert', 'aria-hidden', 'contenteditable', 'class', 'style', 'open'] });
-        // Seed a few visible anchors immediately, including when activation happens halfway down the page.
+            attributeFilter: ['hidden', 'inert', 'aria-hidden', 'contenteditable', 'class', 'style', 'open',
+                'role', 'dir', 'lang', 'theme', 'data-theme', 'data-color-mode'] });
         const body = document.body;
         if (body && document.designMode !== 'on') {
-            for (const y of [0.12, 0.4, 0.7]) {
-                for (const x of [0.25, 0.55]) {
-                    const element = document.elementFromPoint(innerWidth * x, innerHeight * y);
-                    if (!(element instanceof HTMLElement) || element.closest(pageExclude))
-                        continue;
-                    const anchor = pageAnchor(element);
-                    if (!anchor || anchor === body || anchor.childElementCount > 8 || !anchor.firstChild ||
-                        !anchor.firstChild.textContent?.trim() || anchor.querySelector('p,div,section,article,li,table'))
-                        continue;
-                    track(element);
-                    nearby.add(anchor);
-                    dirty.add(anchor);
+            // At a deep scroll position, observe a small reading-order window before scanning from the top.
+            // Include preceding text so a point inside a paragraph doesn't jump ahead of its heading.
+            if (scrollY > innerHeight) {
+                const hit = document.caretRangeFromPoint(innerWidth / 2, Math.min(16, innerHeight / 2))?.startContainer;
+                if (hit instanceof Text && body.contains(hit) && !hit.parentElement?.closest(pageExclude)) {
+                    const local = makeWalker(body);
+                    local.currentNode = hit;
+                    for (let i = 0; i < VIEWPORT_NEIGHBORS; i++) {
+                        if (!local.previousNode())
+                            break;
+                    }
+                    let node = local.currentNode;
+                    for (let i = 0; node && i <= VIEWPORT_NEIGHBORS * 2; i++, node = local.nextNode()) {
+                        if (node instanceof Text && node.parentElement)
+                            track(node.parentElement);
+                    }
                 }
             }
             roots.add(body);

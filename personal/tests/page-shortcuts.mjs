@@ -25,7 +25,7 @@ export const shortcutHtml = `<!doctype html><meta charset="utf-8"><title>PRIVATE
 ${paragraphs.map((s) => `<p>${s}</p>`).join('')}
 <p id="far">${distant}</p><p>${duplicate}</p><p>${duplicate}</p>
 </article><footer><p>Footer label</p></footer>`;
-export const mockTranslator = (prefix) => {
+export const mockTranslator = (translate) => {
   const holds = new Map();
   let active = 0;
   let highWater = 0;
@@ -53,19 +53,15 @@ export const mockTranslator = (prefix) => {
         if (gate) { gate.started.resolve(); return gate.released.promise; }
       }));
       await delay(25);
-      return items ? JSON.stringify(items.map(({ id, text }) => ({ id, translation: prefix + text }))) : prefix + sources[0];
+      return items ? JSON.stringify(items.map(({ id, text }) => ({ id, translation: translate(text) }))) : translate(sources[0]);
     } finally { active--; }
   };
   return { hold, decode, complete, peak: () => highWater };
 };
 
-export const verifyPageShortcuts = async ({ context, worker, origin, calls, mock, prefix }) => {
-  const page = await context.newPage();
-  const url = `${origin}${shortcutPagePath}?q=PRIVATE_QUERY`;
-  await page.goto(url);
-  await page.bringToFront();
+export const shortcutDriver = async (context, page) => {
   const client = await context.newCDPSession(page);
-  const press = async (letter) => {
+  return async (letter) => {
     // A nonzero native virtual key code makes CDP send a browser accelerator, as a physical
     // shortcut would. Plain renderer keyboard events do not activate chrome.commands.
     for (const type of ['rawKeyDown', 'keyUp']) {
@@ -74,6 +70,14 @@ export const verifyPageShortcuts = async ({ context, worker, origin, calls, mock
         nativeVirtualKeyCode: letter.charCodeAt(0), isSystemKey: true });
     }
   };
+};
+
+export const verifyPageShortcuts = async ({ context, worker, origin, calls, mock, prefix }) => {
+  const page = await context.newPage();
+  const url = `${origin}${shortcutPagePath}?q=PRIVATE_QUERY`;
+  await page.goto(url);
+  await page.bringToFront();
+  const press = await shortcutDriver(context, page);
   const commands = await worker.evaluate(() => chrome.commands.getAll());
   for (const [name, letter] of [['translate-page', 'A'], ['translate-selection', 'C']]) {
     assert.match(commands.find((command) => command.name === name)?.shortcut ?? '', new RegExp('^(⌥|Alt\\+)' + letter + '$', 'i'));

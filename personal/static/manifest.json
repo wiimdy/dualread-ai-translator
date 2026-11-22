@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "DualRead 개인 번역기",
   "description": "페이지 전체 또는 드래그한 글을 ChatGPT 구독이나 지정한 서버로 번역해 원문 아래에 표시합니다.",
-  "version": "0.13.4",
+  "version": "0.13.5",
   "minimum_chrome_version": "120",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl3KaYueQmqNRFFfAH+z/Om31xiYj0TqEIha0bwqPShBXF223RHalyyEvh1gJRVJa091VodaZhYyWXyO6vjEysrSHbXxdUKM325D9aFAOAox0xMKDKoa67/EVXwp2Equ6FJ6f3M7LN+6S7mlST7Hju+VtW6kGhJIlVAF8qUNPSCjjMrr7/x1NYqRMZLVL9MyK5qRBAlP63AkmhFwIddPZRGhabsKnt4sodaTordK3TArP46L+pMQh7f1lW9dOoy+QwM/BG/dOWTm1bSrRyq3ErPTjXicAqUiTv4EbsRfX4wuPBXD5W5R1PW7pPlYxdxyWWhKNYqQX9XNiCiLJmGvbuwIDAQAB",
   "icons": {
