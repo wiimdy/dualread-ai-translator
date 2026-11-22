@@ -1,3 +1,8 @@
+/*! DualRead modification: expose advertised reasoning levels and the chosen response effort. */
+import type OpenAI from "openai";
+
+export type ResponseReasoningEffort = NonNullable<OpenAI.ReasoningEffort>;
+
 export interface SessionIdentity {
   name?: string;
   email?: string;
@@ -38,6 +43,7 @@ export interface LoginProfile {
 export interface ChatGPTModel {
   slug: string;
   displayName: string;
+  reasoningEfforts: ResponseReasoningEffort[];
 }
 
 /** Implement in the trusted local process with an OS-backed secret store. Never use plaintext or a hardcoded key. */
@@ -74,6 +80,7 @@ export interface ResponseInputMessage {
 
 export interface StreamResponseOptions {
   model: string;
+  reasoningEffort?: ResponseReasoningEffort;
   input: string | ResponseInputMessage[];
   instructions?: string;
   signal?: AbortSignal;

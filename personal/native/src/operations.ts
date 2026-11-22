@@ -1,19 +1,28 @@
 import { INVALID_BATCH_INPUT, INVALID_BATCH_OUTPUT, translatedItems, translationInput, validSourceBatch } from '../../src/translation-prompt.js';
-import type { ChatGPTClient } from '../vendor/siwc/packages/local/src/types.js';
+import type { ChatGPTClient, ResponseReasoningEffort } from '../vendor/siwc/packages/local/src/types.js';
 
 const LANGUAGES = new Map(Object.entries({
   ko: 'Korean', korean: 'Korean', '한국어': 'Korean',
 }));
 const MISSING_CONSENT = 'ChatGPT 계정에서 이 앱의 플랜 사용을 허용해야 합니다. 설정에서 ChatGPT 연결을 다시 눌러 주세요.';
+const MODEL_UNAVAILABLE = '선택한 모델을 이 구독에서 사용할 수 없습니다. 설정에서 다른 모델을 선택해 주세요.';
+const EFFORT_UNAVAILABLE = '선택한 모델이 이 추론 강도를 지원하지 않습니다. 설정에서 다른 강도를 선택해 주세요.';
 
-interface NativeRequest { action: unknown; language?: unknown; text?: unknown; texts?: unknown }
-type NativeResult = { ok: true; connected?: boolean; translation?: string; translations?: string[] } | { ok: false; error: string };
+interface NativeRequest { action: unknown; language?: unknown; text?: unknown; texts?: unknown; model?: unknown; effort?: unknown }
+interface PlanModel { id: string; label: string; efforts: ResponseReasoningEffort[] }
+type PlanCatalog = { ok: true; models: PlanModel[]; defaultModel: string } | { ok: false; error: string };
+type NativeResult = PlanCatalog | { ok: true; connected?: boolean; translation?: string; translations?: string[] };
 
-const failure = (error: string): NativeResult => ({ ok: false, error });
+const failure = (error: string) => ({ ok: false as const, error });
 
 const safeError = (error: unknown): string => {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
+  if (error && typeof error === 'object' && 'param' in error && error.param === 'reasoning.effort') {
+    return EFFORT_UNAVAILABLE;
+  }
   switch (code) {
+    case 'model_not_found':
+      return MODEL_UNAVAILABLE;
     case 'subscription_sharing_usage_limit_exceeded':
       return 'ChatGPT 플랜의 앱 사용 한도에 도달했습니다. ChatGPT의 사용량 설정을 확인해 주세요.';
     case 'subscription_sharing_user_not_eligible':
@@ -44,11 +53,24 @@ const safeError = (error: unknown): string => {
   }
 };
 
+const listPlanModels = async (client: ChatGPTClient, signal: AbortSignal): Promise<PlanCatalog> => {
+  const session = await client.getSession();
+  if (session.error) return failure(safeError(session.error));
+  if (session.status !== 'connected') return failure('설정에서 먼저 ChatGPT 계정을 연결해 주세요.');
+  if (!session.sharing) return failure(MISSING_CONSENT);
+  const catalog = await client.listModels({ signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
+  const models = catalog.filter((item) => !/audio|speech|transcrib|whisper|tts|image|realtime|embedding|moderation|video|sora/i.test(item.slug))
+    .map((item) => ({ id: item.slug, label: item.displayName, efforts: item.reasoningEfforts }));
+  if (!models.length) return failure('이 계정에서 사용할 수 있는 텍스트 모델을 찾지 못했습니다.');
+  const defaultModel = models.find((item) => item.id === 'gpt-6.1-terra') ?? models[0];
+  return { ok: true, models, defaultModel: defaultModel.id };
+};
+
 export const handleRequest = async (request: unknown, client: ChatGPTClient, signal: AbortSignal): Promise<NativeResult> => {
   if (!request || typeof request !== 'object' || !('action' in request)) {
     return failure('지원하지 않는 요청입니다.');
   }
-  const { action, text, texts, language } = request as NativeRequest;
+  const { action, text, texts, language, model, effort } = request as NativeRequest;
   try {
     switch (action) {
       case 'status': {
@@ -70,23 +92,26 @@ export const handleRequest = async (request: unknown, client: ChatGPTClient, sig
         const session = await client.getSession();
         return session.error ? failure(safeError(session.error)) : { ok: true, connected: false };
       }
+      case 'list-models':
+        return await listPlanModels(client, signal);
       case 'translate':
       case 'translate-batch': {
         const target = typeof language === 'string' ? LANGUAGES.get(language.trim().toLowerCase()) : undefined;
         if (!target) return failure('지원하는 대상 언어를 선택해 주세요.');
         const source = action === 'translate' ? [text] : texts;
         if (!validSourceBatch(source)) return failure(INVALID_BATCH_INPUT);
-        const session = await client.getSession();
-        if (session.error) return failure(safeError(session.error));
-        if (session.status !== 'connected') return failure('설정에서 먼저 ChatGPT 계정을 연결해 주세요.');
-        if (!session.sharing) return failure(MISSING_CONSENT);
-        const models = await client.listModels({ signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
-        const model = models.find((item) => item.slug === 'gpt-6.1-terra') ?? models.find((item) =>
-          !/audio|speech|transcrib|whisper|tts|image|realtime|embedding|moderation|video|sora/i.test(item.slug));
-        if (!model) return failure('이 계정에서 사용할 수 있는 텍스트 모델을 찾지 못했습니다.');
+        if (model !== undefined && (typeof model !== 'string' || model.length > 200)) return failure('모델 설정을 확인해 주세요.');
+        if (effort !== undefined && (typeof effort !== 'string' || effort.length > 32)) return failure('추론 강도 설정을 확인해 주세요.');
+        const catalog = await listPlanModels(client, signal);
+        if (!catalog.ok) return catalog;
+        const selected = catalog.models.find((item) => item.id === (model || catalog.defaultModel));
+        if (!selected) return failure(MODEL_UNAVAILABLE);
+        const selectedEffort = effort ? selected.efforts.find((level) => level === effort) : undefined;
+        if (effort && !selectedEffort) return failure(EFFORT_UNAVAILABLE);
         const { instructions, content } = translationInput(source, target);
         const result = await client.streamResponse({
-          model: model.slug,
+          model: selected.id,
+          ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
           instructions,
           input: [{ role: 'user', content }],
           signal,

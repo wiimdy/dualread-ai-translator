@@ -26,6 +26,7 @@ const translations = new Map([
   ['Local storage policy', '로컬 저장 정책'], ['Keep recent items.', '최근 항목을 보관합니다.'],
   ['Choose stable mode.', 'stable 모드를 선택합니다.'],
   ['Markup example', '태그 예시는 <b>로컬</b>입니다.'],
+  ['Tomorrow’s weather', '내일의 날씨'], ['Weekly outlook', '주간 전망'],
 ]);
 // Accept irregular source formatting here so the assertions can independently check the wire text.
 export const readingTranslation = (source) =>
@@ -45,6 +46,10 @@ p {margin:.7em 0 1.05em}
 p.byline {font:600 13px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.03em;margin:1.25em 0 .4em}
 code {font:.83em/1.35 Menlo,Consolas,monospace;background:var(--code);border-radius:3px;padding:.06em .23em}
 pre {font:16px/1.5 Menlo,Consolas,monospace;background:var(--code);padding:16px}
+.ranking {display:flex;width:320px;height:160px;overflow:hidden;font:15px/1.4 Arial,sans-serif}
+.numbers {display:flex;flex-direction:column;gap:12px}.numbers > span {flex:none;width:32px;height:48px}
+.stories {position:relative;flex:1}.ranked-story {position:absolute;top:0;width:100%;display:flex;height:48px;min-height:48px}
+.ranked-story a {display:block}.ranked-story button {flex:none;width:32px;height:32px}
 </style></head><body><main>
 <header><p id="byline" class="byline">${byline}</p><h1 id="title">${title}</h1></header>
 <p id="intro">${intro}</p><h2 id="heading">${heading}</h2>
@@ -56,7 +61,13 @@ pre {font:16px/1.5 Menlo,Consolas,monospace;background:var(--code);padding:16px}
 <div id="role-heading" role="heading" aria-level="2"><strong style="font:italic 700 29px/1.4 Georgia,serif">Reading settings</strong></div>
 <div id="mixed"><span id="inline-title" style="font-size:30px;font-weight:700">Local storage policy</span><br>Keep recent items.</div>
 <p id="emphasis">Choose <em>stable</em> mode.</p>
-<p id="markup">Markup example</p></main></body></html>`;
+<p id="markup">Markup example</p>
+<div><a id="headline-link" href="/weather" style="display:block;font:600 25px/1.3 Georgia,serif">Tomorrow’s weather</a></div>
+<div><a id="wrapped-headline" href="/weekly" style="display:block"><h3>Weekly outlook</h3></a></div>
+<section class="ranking"><div class="numbers"><span>1.</span><span>2.</span></div><div class="stories">
+<div class="ranked-story" style="transform:translateY(0px)"><div><a href="/lakes">Where the local wetland birds spend the winter</a></div><button aria-label="Bookmark">☆</button></div>
+<div class="ranked-story" style="transform:translateY(60px)"><div><a href="/bees">How rooftop gardens help pollinating insects</a></div><button aria-label="Bookmark">☆</button></div>
+</div></section></main></body></html>`;
 
 const resultFor = (page, id) => page.locator(`#${id} > ${done}, #${id} + ${done}`);
 
@@ -145,6 +156,40 @@ export const verifyReadingLayout = async ({ context, origin, calls }) => {
   await resultFor(page, 'markup').waitFor();
   assert.equal(await resultFor(page, 'markup').innerText(), translations.get('Markup example'));
   assert.equal(await resultFor(page, 'markup').locator('b').count(), 0, 'Model text became HTML');
+  for (const [id, sender] of [['headline-link', '#headline-link'], ['wrapped-headline', '#wrapped-headline h3']]) {
+    const source = page.locator(sender);
+    const translated = page.locator('#' + id + ' + ' + done);
+    await source.scrollIntoViewIfNeeded();
+    await translated.waitFor();
+    assert.equal(await translated.evaluate((el) => getComputedStyle(el).display), 'block');
+    assert.equal(await translated.evaluate((el) => getComputedStyle(el).fontSize),
+      await source.evaluate((el) => getComputedStyle(el).fontSize));
+    const [sourceBox, translatedBox] = await Promise.all([source.boundingBox(), translated.boundingBox()]);
+    assert.ok(translatedBox.y >= sourceBox.y + sourceBox.height - 1, 'Linked headline translation must sit below its source');
+  }
+  const ranking = page.locator('.ranking');
+  await ranking.scrollIntoViewIfNeeded();
+  for (const edge of ['first', 'last']) {
+    await ranking.locator(`.ranked-story:${edge}-child a + .is-done`).waitFor({ state: 'attached' });
+  }
+  const rowsDoNotOverlap = (list, reversed) => {
+    const rows = [...list.querySelectorAll('.ranked-story')];
+    if (reversed) rows.reverse();
+    const [first, second] = rows.map((row) => row.getBoundingClientRect());
+    const numbers = [...list.querySelectorAll('.numbers > span')].map((number) => number.getBoundingClientRect().top);
+    return first.bottom <= second.top && Math.abs(first.top - numbers[0]) < 1 && Math.abs(second.top - numbers[1]) < 1;
+  };
+  assert.ok(await ranking.evaluate(rowsDoNotOverlap, false), 'Ranked story translations overlapped the next row or rank');
+  const bookmarks = ranking.getByRole('button', { name: 'Bookmark' });
+  await bookmarks.last().click({ trial: true });
+  const savedRows = await ranking.locator('.ranked-story').evaluateAll((rows) => {
+    const styles = rows.map((row) => row.getAttribute('style'));
+    rows.forEach((row, index) => row.setAttribute('style', styles[1 - index]));
+    return styles;
+  });
+  assert.ok(await ranking.evaluate(rowsDoNotOverlap, true), 'Updated ranks lost alignment with the story rows');
+  await ranking.locator('.ranked-story').evaluateAll((rows, styles) => rows.forEach((row, index) =>
+    row.setAttribute('style', styles[index])), savedRows);
   for (const [id, source] of [['steps', hardBreak], ['pre', pre]]) {
     await resultFor(page, id).waitFor();
     assert.ok(calls.slice(start).flatMap((call) => call.sources).includes(source), 'Intentional source layout was lost');

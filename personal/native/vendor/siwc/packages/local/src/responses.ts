@@ -1,3 +1,4 @@
+/*! DualRead modification: forward an explicitly selected reasoning effort to the Responses API. */
 import OpenAI from "openai";
 import { apiError, ChatGPTError, isObject } from "./errors.js";
 import type { StreamResponseOptions } from "./types.js";
@@ -40,6 +41,7 @@ export async function streamResponse(
   try {
     const result = await client.responses.create({
       model: options.model,
+      ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
       input: input.map((message) => ({ role: message.role, content: message.content })),
       ...(options.instructions !== undefined ? { instructions: options.instructions } : {}),
       store: false,

@@ -16,6 +16,8 @@
         '[role="combobox"]', '[hidden]', '[inert]', '[aria-hidden="true" i]', '.llm-bilingual-translation',
         '.llm-bilingual-page-notice', '.sr-only', '.visually-hidden', '.screen-reader-only'].join(',');
     const inlineLabel = 'a,button,label,summary,[role="button"],[role="menuitem"],[role="tab"]';
+    const phrasing = 'a,span,small,strong,b,em,i,cite,time,abbr,mark';
+    const navigation = 'nav,menu,[role="navigation"],[role="menu"],[role="menubar"],[role="toolbar"]';
     const MAX_REQUESTS = 3;
     const BATCH_SIZE = 5;
     const CACHE_ITEMS = 256;
@@ -81,12 +83,79 @@
         }
         return element.closest('a') ?? element;
     };
+    // A link embedded in an unmarked sentence belongs to the same unit as its surrounding words.
+    const hasInlineProse = (link, block) => {
+        if (block === document.body || link.closest(navigation) ||
+            !getComputedStyle(link).display.startsWith('inline'))
+            return false;
+        for (let part = link; part !== block && part.parentElement; part = part.parentElement) {
+            for (const direction of ['previousSibling', 'nextSibling']) {
+                let neighbor = part[direction];
+                while (neighbor && (neighbor.nodeType === Node.COMMENT_NODE ||
+                    (neighbor instanceof Text && !neighbor.data.trim()) ||
+                    (neighbor instanceof HTMLElement && neighbor.matches('.llm-bilingual-translation')))) {
+                    neighbor = neighbor[direction];
+                }
+                if (neighbor instanceof Text && /[\p{L}\p{N}]/u.test(neighbor.data))
+                    return true;
+                if (neighbor instanceof HTMLElement && !neighbor.matches(inlineLabel + ',' + pageExclude) &&
+                    getComputedStyle(neighbor).display.startsWith('inline') && !neighbor.querySelector(inlineLabel) &&
+                    /[\p{L}\p{N}]/u.test(neighbor.textContent ?? ''))
+                    return true;
+            }
+        }
+        return false;
+    };
+    // In a horizontal flex credit, CSS turns each inline word, link or punctuation mark into a block.
+    const inlineFlexGroup = (element) => {
+        for (let item = element; item.matches(phrasing) && item.parentElement; item = item.parentElement) {
+            const row = item.parentElement;
+            const css = getComputedStyle(row);
+            if (!css.display.endsWith('flex') || !css.flexDirection.startsWith('row') ||
+                row.matches(inlineLabel) || row.closest(navigation))
+                continue;
+            let containsItem = false;
+            let hasLink = false;
+            let hasWords = false;
+            for (const child of row.childNodes) {
+                if (child instanceof Text) {
+                    hasWords ||= /\p{L}/u.test(child.data);
+                    continue;
+                }
+                if (!(child instanceof HTMLElement) || child.matches('.llm-bilingual-translation'))
+                    continue;
+                // An icon or a separate control commonly marks the start of a second item, such as a view count.
+                if (!child.matches(phrasing) || child.matches(pageExclude) ||
+                    child.querySelector('svg,img,button,input') || child.matches('[role="button"],[role="tab"]'))
+                    break;
+                containsItem ||= child === item;
+                if (child.matches('a') || child.querySelector('a'))
+                    hasLink = true;
+                else
+                    hasWords ||= /\p{L}/u.test(child.textContent ?? '');
+            }
+            if (containsItem && hasLink && hasWords)
+                return row;
+        }
+        return null;
+    };
     const pageAnchor = (parent) => {
+        const group = inlineFlexGroup(parent);
+        if (group)
+            return group;
         const label = parent.closest(inlineLabel);
-        const paragraph = parent.closest(semantic);
-        if (label && (!paragraph || !paragraph.contains(label) || !label.matches('a')))
+        if (!label)
+            return anchorFor(parent);
+        if (!label.matches('a'))
             return label;
-        return anchorFor(parent);
+        const block = anchorFor(parent);
+        // Cards can wrap headings and standfirsts in a single link. Keep each child block separate.
+        if (block && block !== label && label.contains(block))
+            return block;
+        if (parent.closest(semantic)?.contains(label))
+            return block;
+        const surrounding = label.parentElement && anchorFor(label.parentElement);
+        return surrounding && surrounding.contains(label) && hasInlineProse(label, surrounding) ? surrounding : label;
     };
     const isPainted = (range, parent, anchor, page) => {
         let box = parent;
@@ -141,6 +210,7 @@
         if (!document.body?.contains(root) || document.designMode === 'on')
             return [];
         const parts = new Map();
+        const ends = new Map();
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
                 if (!range.intersectsNode(node))
@@ -193,7 +263,24 @@
                                 if ((collapse === 'collapse' || collapse === 'preserve-breaks') && /[ \n]$/.test(piece.text)) {
                                     text = text.replace(/^ /, '');
                                 }
+                                // CSS can separate adjacent words with a margin or flex gap instead of a space.
+                                const last = ends.get(anchor);
+                                if (collapse === 'collapse' && last && last.node.parentElement !== parent &&
+                                    /[\p{L}\p{N}]$/u.test(piece.text) && /^[\p{L}\p{N}]/u.test(text)) {
+                                    const caret = document.createRange();
+                                    caret.setStart(last.node, last.offset);
+                                    caret.collapse(true);
+                                    const left = caret.getBoundingClientRect();
+                                    caret.setStart(node, begin);
+                                    caret.collapse(true);
+                                    const right = caret.getBoundingClientRect();
+                                    if (left.bottom > right.top && right.bottom > left.top &&
+                                        Math.abs(left.x - right.x) > Math.min(left.height, right.height) * 0.12) {
+                                        piece.text += ' ';
+                                    }
+                                }
                                 piece.text += text;
+                                ends.set(anchor, { node, offset: end });
                                 parts.set(anchor, piece);
                             }
                         }
@@ -226,7 +313,8 @@
         const { anchor, node } = item;
         const source = getComputedStyle(anchor);
         const type = item.typography === anchor ? source : getComputedStyle(item.typography);
-        const inline = anchor.matches(inlineLabel) ||
+        const blockLink = anchor instanceof HTMLAnchorElement && !source.display.startsWith('inline') && source.display !== 'contents';
+        const inline = (anchor.matches(inlineLabel) && !blockLink) ||
             (source.display === 'inline' && !anchor.matches('[role="heading"]') && !standaloneHeading(anchor));
         const preserveSpaces = /^(preserve|break-spaces)$/.test(type.whiteSpaceCollapse);
         const fontSize = parseFloat(type.fontSize);
@@ -260,6 +348,75 @@
         });
         item.inlineStyles.forEach((original, element) => copyInlineStyle(element, original));
     };
+    const rankedLayouts = new Map();
+    const rankMarker = 'data-dualread-ranked-list';
+    let rankLayoutId = 0;
+    // A live ranking can position fixed-height cards over each other while drawing the
+    // numbers in a separate column. Give both columns the same intrinsic grid tracks.
+    const fitRankedList = (anchor) => {
+        for (let row = anchor; row?.parentElement; row = row.parentElement) {
+            const articles = row.parentElement;
+            const list = articles.parentElement;
+            if (!list || rankedLayouts.has(list))
+                return;
+            if (!row.style.transform.startsWith('translateY(') || getComputedStyle(row).position !== 'absolute' ||
+                list.hasAttribute(rankMarker) || list.children.length !== 2 || list.lastElementChild !== articles)
+                continue;
+            const ranks = list.firstElementChild;
+            if (ranks.children.length < 2 || !Array.from(ranks.children).every((rank, index) => rank.textContent?.trim().replace(/\.$/, '') === String(index + 1)))
+                continue;
+            const marker = String(++rankLayoutId);
+            const selector = `[${rankMarker}="${marker}"]`;
+            const sheet = new CSSStyleSheet();
+            const gap = getComputedStyle(ranks).rowGap;
+            const trackRows = () => {
+                const entries = Array.from(articles.children);
+                const shifts = entries.map((entry) => entry instanceof HTMLElement ?
+                    /^translateY\((-?[\d.]+)px\)$/.exec(entry.style.transform) : null);
+                if (shifts.some((match) => !match))
+                    return;
+                const offsets = shifts.map((match) => Number(match[1]));
+                const positions = [...new Set(offsets)].sort((a, b) => a - b);
+                const count = Math.max(ranks.children.length, positions.length);
+                const cards = selector + ' > :nth-child(2)';
+                sheet.replaceSync(`
+          ${selector} { display:grid!important; grid-template-columns:max-content minmax(0,1fr)!important;
+            grid-auto-rows:max-content!important; align-content:start!important; gap:${gap} 0!important; overflow:auto!important; }
+          ${selector} > * { display:grid!important; grid-template-rows:subgrid!important; grid-row:1/span ${count}!important;
+            row-gap:inherit!important; height:auto!important; min-height:0!important; }
+          ${selector} > :first-child { grid-column:1!important; }
+          ${cards} { grid-column:2!important; min-width:0!important; }
+          ${cards} > * { position:relative!important; inset:auto!important; height:auto!important; transform:none!important;
+            grid-column:1!important; }
+          ${offsets.map((offset, index) => `${cards} > :nth-child(${index + 1}) { grid-row:${positions.indexOf(offset) + 1}!important; }`).join('\n')}
+        `);
+            };
+            trackRows();
+            if (!sheet.cssRules.length)
+                return;
+            list.setAttribute(rankMarker, marker);
+            document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+            const watch = new MutationObserver((records) => {
+                if (!list.isConnected || list.firstElementChild !== ranks || list.lastElementChild !== articles ||
+                    !list.querySelector('.llm-bilingual-translation')) {
+                    release();
+                    return;
+                }
+                if (records.some(({ target, type }) => target === ranks || target === articles ||
+                    (type === 'attributes' && target.parentElement === articles)))
+                    trackRows();
+            });
+            watch.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+            const release = () => {
+                watch.disconnect();
+                list.removeAttribute(rankMarker);
+                document.adoptedStyleSheets = document.adoptedStyleSheets.filter((active) => active !== sheet);
+                rankedLayouts.delete(list);
+            };
+            rankedLayouts.set(list, release);
+            return;
+        }
+    };
     // Keep DualRead's inside/after contract. A child also stays with its source in a row or grid.
     const place = (item) => {
         const { anchor, node } = item;
@@ -270,13 +427,20 @@
             return;
         }
         const parent = anchor.parentElement;
-        const css = parent && getComputedStyle(parent);
+        // An image and its single text heading often share one link. Place the translation
+        // outside that link without cloning the URL or expanding its click target.
+        const singleTextLink = parent instanceof HTMLAnchorElement && Array.from(parent.childNodes)
+            .every((child) => child === anchor || child === node || !child.textContent?.trim());
+        const after = singleTextLink ? parent : anchor;
+        const container = after.parentElement;
+        const css = container && getComputedStyle(container);
         const horizontal = css && (css.display.includes('grid') || (css.display.includes('flex') && css.flexDirection.startsWith('row')));
         const inside = anchor === document.body || scope.LLMTranslatorShared.getTranslationPlacement(anchor.tagName) === 'inside' || horizontal;
         if (inside && node.parentElement !== anchor)
             anchor.append(node);
-        if (!inside && anchor.nextElementSibling !== node)
-            anchor.after(node);
+        if (!inside && after.nextElementSibling !== node)
+            after.after(node);
+        fitRankedList(anchor);
         styleResult(item, Boolean(inside));
         if (item.observer && parent && parent !== item.parent) {
             item.observer?.disconnect();
@@ -426,11 +590,23 @@
                     place(prev);
                     continue;
                 }
+                const cached = cachedRoute === route ? pageCache.get(piece.text) : undefined;
                 const item = resultFor(piece, route);
+                if (cached !== undefined) {
+                    showTranslation(item, cached);
+                    count++;
+                    continue;
+                }
                 item.node.className = 'llm-bilingual-translation is-loading';
                 item.node.textContent = '번역 중…';
                 try {
-                    const translated = await requestOne(piece.text, route, () => token === running);
+                    const pending = cachedRoute === route ? pendingPage.get(piece.text) : undefined;
+                    if (pending)
+                        await pending;
+                    if (token !== running)
+                        break;
+                    const translated = (cachedRoute === route ? pageCache.get(piece.text) : undefined) ??
+                        await requestOne(piece.text, route, () => token === running);
                     if (token !== running)
                         break;
                     place(item);
@@ -456,7 +632,16 @@
         }
     };
     let stopPage;
+    const elapsedUnits = {
+        second: '초', minute: '분', hour: '시간', day: '일', week: '주', month: '개월', year: '년',
+    };
+    const elapsedLabel = (text) => {
+        const match = /^(\+)?(\d+) (second|minute|hour|day|week|month|year)s? ago$/i.exec(text);
+        if (match)
+            return match[2] + elapsedUnits[match[3].toLowerCase()] + (match[1] ? ' 이상 전' : ' 전');
+    };
     const pageCache = new Map();
+    const pendingPage = new Map();
     let cachedRoute;
     const remember = (text, translation) => {
         if (text.length > MAX_CHARS || translation.length > MAX_CHARS * 4)
@@ -488,6 +673,13 @@
         let initialObservation;
         let requests = 0;
         let singleOnly = false;
+        let readingStreak = 0;
+        let readingSincePrefetch = 0;
+        let firstPrefetched;
+        const MAX_READING_STREAK = 6;
+        const LOOKAHEAD_VIEWPORTS = 2;
+        const READING_TEXT_CHARS = 24;
+        const COMPACT_LABEL_CHARS = 48;
         const onScreen = (anchor) => {
             const rect = anchor.getBoundingClientRect();
             return rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
@@ -551,7 +743,7 @@
                 return;
             }
             unsubscribe(anchor);
-            if (!text) {
+            if (!text || /^(?:\d{1,4}[.)]?|[,.;:|•·…–—-]+)$/.test(text)) {
                 removeResult(anchor);
                 return;
             }
@@ -563,6 +755,11 @@
                 return;
             }
             removeResult(anchor);
+            const elapsed = elapsedLabel(text);
+            if (elapsed !== undefined) {
+                render(anchor, text, elapsed);
+                return;
+            }
             const cached = pageCache.get(text);
             if (cached !== undefined) {
                 render(anchor, text, cached);
@@ -576,19 +773,42 @@
                 waiting.add(text);
             }
         };
-        const firstVisible = () => {
-            let earliest;
-            let source;
+        const isReadingText = (anchor, text) => {
+            if (anchor.closest('nav,menu,footer,aside,button,time,[role="navigation"],[role="toolbar"],[role="button"],[role="tab"]'))
+                return false;
+            if (anchor.closest('h1'))
+                return true;
+            // A one-word section link often shares the heading tag with the actual stories below it.
+            if (!/\s/u.test(text) && (anchor.closest('a') || anchor.querySelector('a')))
+                return false;
+            if (anchor.closest('h2,h3,h4,h5,h6,p,blockquote,pre,[role="heading"],[role="paragraph"]'))
+                return true;
+            // Many news cards use an ordinary link for the headline.
+            return text.length >= READING_TEXT_CHARS && /\s/u.test(text) && Boolean(anchor.closest('main,article,[role="main"]'));
+        };
+        const nearbySources = () => {
+            const queues = { reading: new Set(), other: new Set(), ahead: new Set(), behind: new Set() };
+            const entries = [];
+            const margin = innerHeight * LOOKAHEAD_VIEWPORTS;
             for (const text of waiting) {
                 for (const anchor of subscribers.get(text) ?? []) {
-                    if (onScreen(anchor) && (!earliest ||
-                        (earliest.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_PRECEDING))) {
-                        earliest = anchor;
-                        source = text;
-                    }
+                    if (!nearby.has(anchor))
+                        continue;
+                    const { top, bottom, left, right } = anchor.getBoundingClientRect();
+                    if (right <= 0 || left >= innerWidth || top >= innerHeight + margin || bottom <= -margin)
+                        continue;
+                    const queue = top >= innerHeight ? 'ahead' : bottom <= 0 ? 'behind' : isReadingText(anchor, text) ? 'reading' : 'other';
+                    entries.push({ text, anchor, queue });
                 }
             }
-            return source;
+            entries.sort((a, b) => a.anchor.compareDocumentPosition(b.anchor) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1);
+            for (const { text, queue } of entries)
+                queues[queue].add(text);
+            for (const text of queues.reading)
+                queues.other.delete(text);
+            for (const text of [...queues.reading, ...queues.other])
+                queues.ahead.delete(text);
+            return queues;
         };
         const fetchGroup = async (texts) => {
             let translations;
@@ -622,28 +842,60 @@
         };
         const pump = () => {
             while (active && !failed && requests < MAX_REQUESTS && waiting.size) {
-                const visible = firstVisible();
+                const { reading, other, ahead, behind } = nearbySources();
+                const visible = reading.size > 0 || other.size > 0;
                 // Wait for observed sources before using free slots on look-ahead batches.
-                if (visible === undefined && (dirty.size || (!started && (walker || roots.size || initialObservation))))
+                if (!reading.size && dirty.size && (!visible || !started))
+                    return;
+                if (!visible && !started && (walker || roots.size || initialObservation))
+                    return;
+                const forwardBusy = firstPrefetched !== undefined && pendingPage.has(firstPrefetched);
+                const prioritizeReading = reading.size > 0 && (!other.size || readingStreak < MAX_READING_STREAK);
+                // After each wave of visible pieces, one free slot can prepare the next screen.
+                const reserveForward = prioritizeReading && ahead.size > 0 && !forwardBusy && requests > 0 && readingSincePrefetch >= MAX_REQUESTS;
+                const foreground = visible && !reserveForward;
+                if (!foreground && forwardBusy && Array.from(pendingPage.keys()).some((text) => Array.from(subscribers.get(text) ?? []).some(onScreen)))
+                    return;
+                const candidates = foreground ? (prioritizeReading ? reading : other) : ahead.size ? ahead : behind;
+                if (!candidates.size)
                     return;
                 const texts = [];
                 let length = 0;
-                while (texts.length < (visible !== undefined || singleOnly ? 1 : BATCH_SIZE)) {
-                    const text = visible ?? waiting.values().next().value;
-                    if (text === undefined || (texts.length && length + text.length > MAX_CHARS))
+                for (const text of candidates) {
+                    if (texts.length && (length + text.length > MAX_CHARS || (foreground && text.length > COMPACT_LABEL_CHARS)))
                         break;
                     waiting.delete(text);
                     texts.push(text);
                     length += text.length;
+                    if (singleOnly || texts.length >= BATCH_SIZE || (foreground && (prioritizeReading || text.length > COMPACT_LABEL_CHARS)))
+                        break;
+                }
+                if (foreground) {
+                    readingStreak = prioritizeReading ? readingStreak + 1 : 0;
+                    if (prioritizeReading)
+                        readingSincePrefetch++;
+                }
+                else if (candidates === ahead) {
+                    firstPrefetched = texts[0];
+                    readingSincePrefetch = 0;
                 }
                 started = true;
                 requests++;
-                void fetchGroup(texts).catch((error) => {
+                const task = fetchGroup(texts);
+                for (const text of texts)
+                    pendingPage.set(text, task);
+                void task.catch((error) => {
                     if (!active || failed)
                         return;
                     failed = true;
                     notify(error instanceof Error ? error.message : '페이지를 번역하지 못했습니다.');
-                }).finally(() => { requests--; pump(); });
+                }).finally(() => {
+                    for (const text of texts)
+                        if (pendingPage.get(text) === task)
+                            pendingPage.delete(text);
+                    requests--;
+                    pump();
+                });
             }
         };
         const schedule = () => {
@@ -666,7 +918,7 @@
                     nearby.delete(anchor);
             }
             schedule();
-        }, { rootMargin: innerHeight * 2 + 'px 0px' });
+        }, { rootMargin: innerHeight * LOOKAHEAD_VIEWPORTS + 'px 0px' });
         const track = (element) => {
             const anchor = pageAnchor(element);
             if (!anchor || anchor === document.documentElement)
@@ -810,6 +1062,7 @@
             changed.disconnect();
             waiting.clear();
             subscribers.clear();
+            pendingPage.clear();
             preserveSelection = undefined;
             stopPage = undefined;
         };
@@ -860,22 +1113,32 @@
             notify(error instanceof Error ? error.message : '문단을 읽을 수 없습니다.');
         }
     };
+    const clearTranslations = (clearCache) => {
+        stopPage?.();
+        if (clearCache)
+            pageCache.clear();
+        generation++;
+        stopPick();
+        running = undefined;
+        const count = results.size;
+        for (const item of results.values()) {
+            item.observer?.disconnect();
+            item.node.remove();
+        }
+        results.clear();
+        for (const release of rankedLayouts.values())
+            release();
+        return count;
+    };
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.route)
+            clearTranslations(true);
+    });
     chrome.runtime.onMessage.addListener((message, sender, respond) => {
         if (sender.id !== chrome.runtime.id || !['personal-pick', 'personal-selected', 'personal-all', 'personal-clear'].includes(message?.type))
             return;
         if (message.type === 'personal-clear' || (message.type === 'personal-all' && stopPage)) {
-            stopPage?.();
-            if (message.type === 'personal-clear')
-                pageCache.clear();
-            generation++;
-            stopPick();
-            running = undefined;
-            const count = results.size;
-            for (const item of results.values()) {
-                item.observer?.disconnect();
-                item.node.remove();
-            }
-            results.clear();
+            const count = clearTranslations(message.type === 'personal-clear');
             respond({ ok: true, count, active: false });
             return;
         }

@@ -33,7 +33,7 @@
   font: 710 20px/1.4 var(--ui-font);
   letter-spacing: -.055em;
 }
-.setting-field { display: grid; gap: 7px; }
+.setting-field { display: grid; min-width: 0; gap: 7px; }
 .connection-fields > .setting-field { margin-top: 22px; }
 .setting-field label, .account-heading h3 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 670; letter-spacing: -.025em; }
 .provider-select { position: relative; }
@@ -92,6 +92,11 @@
 .install-instructions { padding-inline-start: 20px; font-size: 13px; }
 .install-instructions p { margin-block: 9px; }
 .install-instructions pre { margin: 10px 0; padding: 10px; border-radius: 6px; background: var(--canvas); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; font-size: 12px; }
+.model-controls { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 8px 14px; }
+.plan-block .model-controls { margin-top: 23px; }
+.model-controls > :is(small, p) { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; }
+#catalogStatus:empty { display: none; }
+.options .setting-field select:disabled { color: var(--muted); cursor: default; }
 .custom-fields { display: grid; gap: 16px; padding-bottom: 7px; }
 .setting-field small, .setting-field .optional { color: var(--muted); font-size: 12px; font-weight: 450; }
 .optional { margin-left: 4px; }
@@ -164,6 +169,7 @@
   .settings-heading h1 { font-size: 36px; }
   .settings-heading p { font-size: 14px; }
   .connection-fields { padding: 20px 19px 14px; }
+  .model-controls { grid-template-columns: 1fr; gap: 12px; }
   .options .settings-footer { padding: 13px 19px; }
   .preview-panel { padding: 17px 16px 22px; }
   .preview-reading { padding: 18px; }

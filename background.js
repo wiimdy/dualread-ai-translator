@@ -1,10 +1,16 @@
-import { isRecord, nativeRequest, readRoute, saveRoute, translate, translateBatch } from './routing.js';
+import { isRecord, nativeRequest, optionsState, readRoute, saveRoute, translate, translateBatch } from './routing.js';
 import { INVALID_BATCH_OUTPUT } from './translation-prompt.js';
 const isOwnView = (sender, page) => sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL(page);
 const dispatch = async (msg, sender) => {
     const options = isOwnView(sender, 'options.html');
-    if (msg.type === 'personal-state' && (options || isOwnView(sender, 'popup.html')))
-        return { ok: true, ...await readRoute() };
+    if (msg.type === 'personal-state') {
+        if (options)
+            return { ok: true, ...await optionsState() };
+        if (isOwnView(sender, 'popup.html'))
+            return { ok: true, ...await readRoute() };
+    }
+    if (msg.type === 'personal-models' && options)
+        return nativeRequest({ action: 'list-models' });
     if (msg.type === 'personal-save' && options) {
         await saveRoute(msg);
         return { ok: true };

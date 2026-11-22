@@ -4,10 +4,23 @@ export interface Route {
   provider: 'plan' | 'custom';
   endpoint: string;
   model: string;
+  effort: string;
   routeVersion: string;
 }
 
-const initialRoute: Route = { provider: 'plan', endpoint: '', model: '', routeVersion: 'initial-plan' };
+export interface PlanModel {
+  id: string;
+  label: string;
+  efforts: string[];
+}
+
+interface Preferences {
+  plan: Pick<Route, 'model' | 'effort'>;
+  custom: Pick<Route, 'endpoint' | 'model' | 'effort'>;
+}
+
+export const CUSTOM_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+const initialRoute: Route = { provider: 'plan', endpoint: '', model: '', effort: '', routeVersion: 'initial-plan' };
 const NATIVE_HOST = 'dev.dualread.personal';
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -29,14 +42,42 @@ export const permissionPattern = (endpoint: string): string => {
   return `${protocol}//${hostname}/*`;
 };
 
-export const readRoute = async (): Promise<Route> => {
-  const { route } = await chrome.storage.local.get('route');
+const modelSettings = (value: Record<string, unknown>, provider: Route['provider']): Preferences['plan'] => {
+  const { model = '', effort = '' } = value;
+  if (typeof model !== 'string' || model.length > 200 || (provider === 'custom' && !model.trim())) {
+    throw new Error('번역에 사용할 모델 ID를 확인해 주세요.');
+  }
+  if (typeof effort !== 'string' || (effort && (provider === 'custom'
+    ? !CUSTOM_EFFORTS.some((level) => level === effort)
+    : !/^[a-z][a-z0-9_-]{0,31}$/.test(effort)))) {
+    throw new Error('모델이 지원하는 추론 강도를 선택하세요.');
+  }
+  return { model: model.trim(), effort };
+};
+
+const storedRoute = (route: unknown): Route => {
   if (route === undefined) return { ...initialRoute };
   if (!isRecord(route) || typeof route.routeVersion !== 'string') throw new Error('번역 설정을 다시 저장해 주세요.');
-  if (route.provider === 'plan') return { ...initialRoute, routeVersion: route.routeVersion };
-  if (route.provider !== 'custom' || typeof route.endpoint !== 'string' ||
-      typeof route.model !== 'string' || !route.model.trim()) throw new Error('번역 설정을 다시 저장해 주세요.');
-  return { provider: 'custom', model: route.model, endpoint: normalizeEndpoint(route.endpoint), routeVersion: route.routeVersion };
+  if (route.provider === 'plan') return { ...initialRoute, ...modelSettings(route, 'plan'), routeVersion: route.routeVersion };
+  if (route.provider !== 'custom' || typeof route.endpoint !== 'string') throw new Error('번역 설정을 다시 저장해 주세요.');
+  return { provider: 'custom', ...modelSettings(route, 'custom'), endpoint: normalizeEndpoint(route.endpoint), routeVersion: route.routeVersion };
+};
+
+export const readRoute = async (): Promise<Route> => storedRoute((await chrome.storage.local.get('route')).route);
+
+const withActive = (preferences: Preferences, { provider, endpoint, model, effort }: Route): Preferences => provider === 'plan'
+  ? { ...preferences, plan: { model, effort } }
+  : { ...preferences, custom: { endpoint, model, effort } };
+
+export const optionsState = async (): Promise<Route & { preferences: Preferences }> => {
+  const state = await chrome.storage.local.get(['route', 'inactiveRoute']);
+  const route = storedRoute(state.route);
+  let preferences: Preferences = {
+    plan: { model: '', effort: '' },
+    custom: { endpoint: '', model: '', effort: '' },
+  };
+  if (state.inactiveRoute !== undefined) preferences = withActive(preferences, storedRoute(state.inactiveRoute));
+  return { ...route, preferences: withActive(preferences, route) };
 };
 
 const readCustomKey = async (endpoint: string): Promise<string> => {
@@ -46,24 +87,26 @@ const readCustomKey = async (endpoint: string): Promise<string> => {
 
 export const saveRoute = async (value: Record<string, unknown>): Promise<void> => {
   if (value.provider !== 'plan' && value.provider !== 'custom') throw new Error('사용할 번역 방식을 선택하세요.');
-  const route: Route = { ...initialRoute, provider: value.provider, routeVersion: crypto.randomUUID() };
+  const route: Route = { ...initialRoute, provider: value.provider, ...modelSettings(value, value.provider), routeVersion: crypto.randomUUID() };
   if (route.provider === 'custom') {
-    if (typeof value.endpoint !== 'string' || typeof value.model !== 'string' ||
-        !value.model.trim() || value.model.length > 200) throw new Error('서버 주소와 모델 ID를 입력하세요.');
+    if (typeof value.endpoint !== 'string') throw new Error('서버의 API 주소를 확인해 주세요.');
     route.endpoint = normalizeEndpoint(value.endpoint);
-    route.model = value.model.trim();
     if (!(await chrome.permissions.contains({ origins: [permissionPattern(route.endpoint)] }))) {
       throw new Error('설정에서 지정한 모델 서버에 대한 접근을 허용해 주세요.');
     }
   }
   await navigator.locks.request('personal-settings', async () => {
+    const previous = (await chrome.storage.local.get('route')).route;
+    const switched = isRecord(previous) && (previous.provider === 'plan' || previous.provider === 'custom') &&
+      previous.provider !== route.provider;
+    const update = switched ? { route, inactiveRoute: storedRoute(previous) } : { route };
     if (route.provider === 'custom') {
       const key = (typeof value.apiKey === 'string' && value.apiKey.trim()) || await readCustomKey(route.endpoint);
       await chrome.storage.session.set({ credential: { endpoint: route.endpoint, key } });
     } else {
       await chrome.storage.session.remove('credential');
     }
-    await chrome.storage.local.set({ route });
+    await chrome.storage.local.set(update);
   });
 };
 
@@ -72,13 +115,19 @@ interface NativeReply {
   connected?: boolean;
   translation?: string;
   translations?: string[];
+  models?: PlanModel[];
+  defaultModel?: string;
   error?: string;
 }
 
 type NativeMessage =
-  | { action: 'login' | 'logout' | 'status' }
-  | { action: 'translate'; text: string; language: string }
-  | { action: 'translate-batch'; texts: string[]; language: string };
+  | { action: 'login' | 'logout' | 'status' | 'list-models' }
+  | { action: 'translate'; text: string; language: string; model?: string; effort?: string }
+  | { action: 'translate-batch'; texts: string[]; language: string; model?: string; effort?: string };
+
+const validPlanModel = (model: unknown): model is PlanModel => isRecord(model) &&
+  typeof model.id === 'string' && !!model.id && typeof model.label === 'string' &&
+  Array.isArray(model.efforts) && model.efforts.every((effort) => typeof effort === 'string' && !!effort);
 
 export const nativeRequest = (message: NativeMessage): Promise<NativeReply> =>
   new Promise((resolve, reject) => {
@@ -99,6 +148,15 @@ export const nativeRequest = (message: NativeMessage): Promise<NativeReply> =>
       port.disconnect();
       if (!isRecord(reply) || reply.ok !== true) {
         reject(new Error(isRecord(reply) && typeof reply.error === 'string' ? reply.error : 'ChatGPT 연결에 실패했습니다.'));
+        return;
+      }
+      if (message.action === 'list-models') {
+        if (!Array.isArray(reply.models) || !reply.models.every(validPlanModel) || typeof reply.defaultModel !== 'string' ||
+            !reply.models.some((model) => model.id === reply.defaultModel)) {
+          reject(new Error('ChatGPT 모델 목록을 읽을 수 없습니다. Mac 연결 프로그램을 확인해 주세요.'));
+          return;
+        }
+        resolve({ ok: true, models: reply.models, defaultModel: reply.defaultModel });
         return;
       }
       if (message.action === 'translate-batch') {
@@ -125,12 +183,13 @@ export const translateBatch = async (texts: unknown, routeVersion: unknown): Pro
   const route = await readRoute();
   if (route.routeVersion !== routeVersion) throw new Error('전송 대상이 바뀌었습니다. 팝업에서 확인하고 다시 시도하세요.');
   if (route.provider === 'plan') {
+    const options = { ...(route.model && { model: route.model }), ...(route.effort && { effort: route.effort }) };
     if (texts.length > 1) {
-      const result = await nativeRequest({ action: 'translate-batch', texts, language: '한국어' });
+      const result = await nativeRequest({ action: 'translate-batch', texts, language: '한국어', ...options });
       if (!result.translations) throw new Error(INVALID_BATCH_OUTPUT);
       return result.translations;
     }
-    const result = await nativeRequest({ action: 'translate', text: texts[0], language: '한국어' });
+    const result = await nativeRequest({ action: 'translate', text: texts[0], language: '한국어', ...options });
     if (!result.translation?.trim()) throw new Error('ChatGPT가 번역문을 반환하지 않았습니다.');
     return [result.translation.trim()];
   }
@@ -145,7 +204,7 @@ export const translateBatch = async (texts: unknown, routeVersion: unknown): Pro
   const response = await fetch(url, {
     method: 'POST', headers, redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store',
     signal: AbortSignal.timeout(28_000),
-    body: JSON.stringify({ model: route.model, messages: [
+    body: JSON.stringify({ model: route.model, ...(route.effort && { reasoning_effort: route.effort }), messages: [
       { role: 'system', content: instructions },
       { role: 'user', content },
     ] }),

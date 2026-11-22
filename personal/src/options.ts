@@ -1,10 +1,14 @@
-import { normalizeEndpoint, permissionPattern } from './routing.js';
+import { CUSTOM_EFFORTS, normalizeEndpoint, permissionPattern, type PlanModel } from './routing.js';
 
 const provider = document.querySelector<HTMLSelectElement>('#provider')!;
 const plan = document.querySelector<HTMLElement>('#plan')!;
 const custom = document.querySelector<HTMLElement>('#custom')!;
 const endpoint = document.querySelector<HTMLInputElement>('#endpoint')!;
 const model = document.querySelector<HTMLInputElement>('#model')!;
+const planModel = document.querySelector<HTMLSelectElement>('#planModel')!;
+const planEffort = document.querySelector<HTMLSelectElement>('#planEffort')!;
+const customEffort = document.querySelector<HTMLSelectElement>('#customEffort')!;
+const catalogStatus = document.querySelector<HTMLElement>('#catalogStatus')!;
 const apiKey = document.querySelector<HTMLInputElement>('#apiKey')!;
 const status = document.querySelector<HTMLElement>('#status')!;
 const accountStatus = document.querySelector<HTMLElement>('#accountStatus')!;
@@ -19,6 +23,39 @@ const previewTranslation = document.querySelector<HTMLElement>('#previewTranslat
 let activeProvider = 'plan';
 let confirmedAccount = false;
 let accountCheck = 0;
+let catalog: { models: PlanModel[]; defaultModel: string } | undefined;
+const effortLabels: Record<string, string> = {
+  none: '사용 안 함', minimal: '최소', low: '낮음', medium: '중간', high: '높음', xhigh: '매우 높음', max: '최대',
+};
+
+const effortOption = (value: string): HTMLOptionElement =>
+  new Option(effortLabels[value] ? `${effortLabels[value]} (${value})` : value, value);
+
+const renderPlanEffort = (value: string, keepSaved: boolean): void => {
+  const modelId = planModel.value || catalog?.defaultModel;
+  const efforts = catalog?.models.find((item) => item.id === modelId)?.efforts ?? [];
+  planEffort.replaceChildren(new Option('모델 기본값', ''), ...efforts.map(effortOption));
+  if (value && !efforts.includes(value) && keepSaved) {
+    planEffort.add(new Option(catalog ? `${value} (현재 사용 불가)` : value, value));
+  }
+  planEffort.value = keepSaved || efforts.includes(value) ? value : '';
+  planEffort.disabled = provider.value !== 'plan' || planEffort.options.length <= 1;
+  planEffort.setCustomValidity(catalog && planEffort.value && !efforts.includes(planEffort.value)
+    ? '이 모델에서 사용할 추론 강도를 다시 선택해 주세요.' : '');
+};
+
+const renderPlanModels = (id = planModel.value, effort = planEffort.value, keepSavedEffort = true): void => {
+  const models = catalog?.models ?? [];
+  const preferred = models.find((item) => item.id === catalog?.defaultModel);
+  const automatic = preferred ? `자동 선택 · ${preferred.label}` : '자동 선택';
+  planModel.replaceChildren(new Option(automatic, ''), ...models.map((item) => new Option(item.label, item.id)));
+  const unavailable = Boolean(id && !models.some((item) => item.id === id));
+  if (unavailable) planModel.add(new Option(catalog ? `${id} (현재 사용 불가)` : id, id));
+  planModel.value = id;
+  planModel.disabled = provider.value !== 'plan' || planModel.options.length <= 1;
+  planModel.setCustomValidity(catalog && unavailable ? '이 계정에서 사용할 모델을 다시 선택해 주세요.' : '');
+  renderPlanEffort(effort, keepSavedEffort);
+};
 
 const showStatus = (element: HTMLElement, message: string, error = false): void => {
   element.textContent = message;
@@ -29,6 +66,21 @@ const confirmFirstLogin = (): void => {
   if (activeProvider !== 'plan' || !confirmedAccount || localStorage.getItem('dualreadPlanWelcome')) return;
   welcome.showModal();
   localStorage.setItem('dualreadPlanWelcome', '1');
+};
+
+const loadModels = async (request: number): Promise<void> => {
+  showStatus(catalogStatus, '사용 가능한 모델을 불러오는 중…');
+  try {
+    const reply = await chrome.runtime.sendMessage({ type: 'personal-models' });
+    if (request !== accountCheck) return;
+    if (!reply?.ok || !Array.isArray(reply.models)) throw new Error(reply?.error || '모델 목록을 불러올 수 없습니다.');
+    catalog = { models: reply.models, defaultModel: reply.defaultModel };
+    renderPlanModels();
+    showStatus(catalogStatus, catalog.models.length ? '' : '이 계정에서 사용할 수 있는 번역 모델이 없습니다.');
+  } catch (error: unknown) {
+    if (request !== accountCheck) return;
+    showStatus(catalogStatus, error instanceof Error ? error.message : '모델 목록을 불러올 수 없습니다.', true);
+  }
 };
 
 const checkAccount = async (action: 'status' | 'login' | 'logout'): Promise<void> => {
@@ -47,6 +99,12 @@ const checkAccount = async (action: 'status' | 'login' | 'logout'): Promise<void
     logout.hidden = !confirmedAccount;
     installHelp.open = false;
     showStatus(accountStatus, confirmedAccount ? '연결됨' : '로그인 필요');
+    if (confirmedAccount) void loadModels(request);
+    else {
+      catalog = undefined;
+      renderPlanModels();
+      showStatus(catalogStatus, 'ChatGPT에 연결하면 사용 가능한 모델이 표시됩니다.');
+    }
     if (action === 'login') confirmFirstLogin();
   } catch (error: unknown) {
     if (request !== accountCheck) return;
@@ -54,6 +112,9 @@ const checkAccount = async (action: 'status' | 'login' | 'logout'): Promise<void
     login.hidden = false;
     logout.hidden = true;
     installHelp.open = true;
+    catalog = undefined;
+    renderPlanModels();
+    showStatus(catalogStatus, '');
     showStatus(accountStatus, error instanceof Error ? error.message : 'Mac 연결 프로그램을 확인해 주세요.', true);
   } finally {
     if (request === accountCheck) {
@@ -67,7 +128,8 @@ const displayProvider = (): void => {
   const customRoute = provider.value === 'custom';
   plan.hidden = customRoute;
   custom.hidden = !customRoute;
-  endpoint.disabled = model.disabled = apiKey.disabled = !customRoute;
+  endpoint.disabled = model.disabled = customEffort.disabled = apiKey.disabled = !customRoute;
+  renderPlanModels();
   endpoint.required = model.required = customRoute;
 };
 
@@ -80,7 +142,8 @@ const submit = async (): Promise<void> => {
       type: 'personal-save',
       provider: route,
       endpoint: customRoute ? endpoint.value.trim() : '',
-      model: customRoute ? model.value.trim() : '',
+      model: customRoute ? model.value.trim() : planModel.value,
+      effort: customRoute ? customEffort.value : planEffort.value,
       apiKey: customRoute ? apiKey.value.trim() : '',
     };
     if (customRoute) {
@@ -107,6 +170,8 @@ form.addEventListener('submit', (event) => {
   if (!save.disabled) void submit();
 });
 form.addEventListener('input', () => showStatus(status, ''));
+planModel.addEventListener('change', () => renderPlanModels(planModel.value, planEffort.value, false));
+planEffort.addEventListener('change', () => renderPlanEffort(planEffort.value, true));
 endpoint.addEventListener('input', () => { apiKey.value = ''; });
 provider.addEventListener('change', () => {
   apiKey.value = '';
@@ -126,8 +191,13 @@ const load = async (): Promise<void> => {
     if (!state?.ok) throw new Error(state?.error || '설정을 불러올 수 없습니다.');
     activeProvider = state.provider;
     provider.value = activeProvider;
-    endpoint.value = state.endpoint || '';
-    model.value = state.model || '';
+    const savedPlan = state.preferences?.plan ?? (activeProvider === 'plan' ? state : {});
+    const savedCustom = state.preferences?.custom ?? (activeProvider === 'custom' ? state : {});
+    endpoint.value = savedCustom.endpoint || '';
+    model.value = savedCustom.model || '';
+    customEffort.append(...CUSTOM_EFFORTS.map(effortOption));
+    customEffort.value = savedCustom.effort || '';
+    renderPlanModels(savedPlan.model || '', savedPlan.effort || '');
     displayProvider();
     if (provider.value === 'plan') void checkAccount('status');
     save.disabled = false;

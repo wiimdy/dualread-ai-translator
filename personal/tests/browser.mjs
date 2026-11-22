@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { mockTranslator, shortcutHtml, shortcutPagePath, verifyPageShortcuts } from './page-shortcuts.mjs';
 import { verifyProgressivePage } from './progressive-page.mjs';
+import { verifyEditorialUnits } from './editorial-units.mjs';
+import { planCatalog, verifyPlanModelSettings, verifyRetainedModelControls } from './model-settings.mjs';
 import { readingHtml, readingPagePath, readingTranslation, verifyReadingLayout } from './reading-layout.mjs';
 
 const extensionDirectory = process.env.EXTENSION_DIR
@@ -87,7 +89,8 @@ const run = async () => {
     const extensionId = new URL(worker.url()).host;
     // Keep Chrome's real content, popup and service-worker paths, replacing the native host
     // boundary inside this temporary profile. Never open a real host or user credentials.
-    await worker.evaluate(({ translation, endpoint }) => {
+    await worker.evaluate(({ translation, endpoint, catalog }) => {
+      globalThis.planTestCatalog = catalog;
       globalThis.nativeTestCalls = [];
       globalThis.testRequests = [];
       const originalFetch = globalThis.fetch.bind(globalThis);
@@ -109,6 +112,8 @@ const run = async () => {
             globalThis.nativeTestCalls.push({ host, message });
             if (message.action === 'status') {
               queueMicrotask(() => onMessage({ ok: true, connected: true }));
+            } else if (message.action === 'list-models') {
+              queueMicrotask(() => onMessage(globalThis.planTestCatalog));
             } else if (message.action === 'translate-batch') {
               queueMicrotask(() => onMessage({ ok: true, translations: message.texts.map(() => translation) }));
             } else if (message.action === 'translate') {
@@ -119,7 +124,7 @@ const run = async () => {
           },
         };
       };
-    }, { translation: nativeTranslation, endpoint: `${endpoint}/chat/completions` });
+    }, { translation: nativeTranslation, endpoint: `${endpoint}/chat/completions`, catalog: planCatalog });
     const nativeCalls = () => worker.evaluate(() => globalThis.nativeTestCalls);
     assert.deepEqual(await nativeCalls(), []);
     assert.deepEqual(await worker.evaluate(() => globalThis.testRequests), []);
@@ -198,6 +203,7 @@ const run = async () => {
     await command('clear');
     assert.equal(await article.locator(translatedBlock).count(), 0);
 
+    await verifyPlanModelSettings({ options, worker });
     await command('all');
     await article.waitForFunction((selector) => document.querySelectorAll(selector).length >= 3, translatedBlock);
     await article.waitForFunction((selector) => {
@@ -208,6 +214,8 @@ const run = async () => {
     const planBatch = planCalls.find(({ message }) => message.action === 'translate-batch');
     assert.equal(planBatch?.host, 'dev.dualread.personal');
     assert.equal(planBatch.message.language, '한국어');
+    assert.equal(planBatch.message.model, 'plan-quick');
+    assert.equal(planBatch.message.effort, 'low');
     assert.ok(planBatch.message.texts.length > 1);
     await command('all');
     await article.waitForFunction(() => !document.querySelector('.llm-bilingual-translation'));
@@ -223,12 +231,14 @@ const run = async () => {
     await options.locator('#provider').selectOption('custom');
     await options.locator('#endpoint').fill(endpoint);
     await options.locator('#model').fill(signature);
+    await options.locator('#customEffort').selectOption('high');
     await options.locator('#save').click();
     await options.waitForFunction(() => document.querySelector('#status').textContent.includes('저장했습니다'));
     await options.reload();
     await options.waitForFunction((url) => document.querySelector('#endpoint').value === url, endpoint);
     assert.equal(await options.locator('#model').inputValue(), signature);
     assert.equal(await options.locator('#provider').inputValue(), 'custom');
+    await verifyRetainedModelControls(options, endpoint, signature);
 
     await command('pick');
     await article.locator(instruction).waitFor({ state: 'visible' });
@@ -242,6 +252,7 @@ const run = async () => {
     await assertRendered(translated);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].body.model, signature);
+    assert.equal(calls[0].body.reasoning_effort, 'high');
     const paragraphPayload = JSON.stringify(calls[0].body);
     assert.ok(paragraphPayload.includes(original));
     assert.ok(!paragraphPayload.includes(selectedWord));
@@ -278,6 +289,7 @@ const run = async () => {
     await verifyPageShortcuts({ context, worker, origin: new URL(articleUrl).origin, calls, mock, prefix });
     await verifyReadingLayout({ context, origin: new URL(articleUrl).origin, calls });
     await verifyProgressivePage({ context, origin: new URL(articleUrl).origin, mock, calls, prefix });
+    await verifyEditorialUnits({ context, origin: new URL(articleUrl).origin, calls, mock, prefix });
     console.log('Chrome UI passed: default plan stub, opt-in paragraph and selection, bilingual rendering, deduplication, clear, and data exclusions. Only the loopback provider received HTTP translation requests.');
   } finally {
     await context?.close();

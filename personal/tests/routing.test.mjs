@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, mock, test } from 'node:test';
-import { normalizeEndpoint, readRoute, saveRoute, translate, translateBatch } from '../dist/routing.js';
+import { nativeRequest, normalizeEndpoint, optionsState, readRoute, saveRoute, translate, translateBatch } from '../dist/routing.js';
 
 const endpoint = 'http://127.0.0.1:10081/v1';
 const origin = 'http://127.0.0.1/*';
@@ -9,7 +9,7 @@ const area = () => {
   const state = {};
   return {
     state,
-    get: async (key) => ({ [key]: state[key] }),
+    get: async (keys) => Object.fromEntries([].concat(keys).map((key) => [key, state[key]])),
     set: async (items) => Object.assign(state, items),
     remove: async (key) => { delete state[key]; },
   };
@@ -45,6 +45,62 @@ test('first launch selects the subscription without a model, key, or network req
   assert.deepEqual(session.state, {});
 });
 
+test('migrates a legacy route and remembers each provider independently', async () => {
+  local.state.route = { provider: 'custom', endpoint, model: 'original', routeVersion: 'old' };
+  assert.deepEqual((await optionsState()).preferences.custom, { endpoint, model: 'original', effort: '' });
+  await saveRoute({ provider: 'plan', model: 'chat-model', effort: 'high' });
+  await saveRoute({ provider: 'custom', endpoint, model: 'own', effort: 'low' });
+  const state = await optionsState();
+  assert.deepEqual(state.preferences, { plan: { model: 'chat-model', effort: 'high' }, custom: { endpoint, model: 'own', effort: 'low' } });
+  assert.equal(state.effort, 'low');
+  assert.equal(state.model, 'own');
+  await saveRoute({ provider: 'custom', endpoint, model: 'own', effort: 'medium' });
+  await assert.rejects(translate(sample, state.routeVersion), /전송 대상/);
+  await saveRoute({ provider: 'plan' });
+  assert.deepEqual((await optionsState()).preferences, { plan: { model: '', effort: '' }, custom: { endpoint, model: 'own', effort: 'medium' } });
+});
+
+test('custom effort is explicit on singles and batches; rejects unsupported effort before storage or transport', async () => {
+  await assert.rejects(saveRoute({ provider: 'custom', endpoint, model: 'own', effort: 'arbitrary' }), /추론 강도/);
+  assert.deepEqual(local.state, {});
+  await saveRoute({ provider: 'custom', endpoint, model: 'own', effort: 'none' });
+  const { routeVersion } = await readRoute();
+  let content = '번역';
+  const fetch = mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ choices: [{ message: { content } }] })));
+  await translate(sample, routeVersion);
+  content = JSON.stringify([{ id: 0, translation: '첫째' }, { id: 1, translation: '둘째' }]);
+  await translateBatch(['First', 'Second'], routeVersion);
+  for (const call of fetch.mock.calls) assert.equal(JSON.parse(call.arguments[1].body).reasoning_effort, 'none');
+});
+
+test('subscription forwards selected model and effort, and validates the native catalogue', async () => {
+  const messages = [];
+  const models = [{ id: 'chat-model', label: 'Chat Model', efforts: ['low', 'high'] }];
+  let response = { ok: true, models, defaultModel: 'chat-model' };
+  chrome.runtime = { connectNative: () => {
+    let respond;
+    return {
+      onMessage: { addListener: (handler) => { respond = handler; } },
+      onDisconnect: { addListener() {} },
+      disconnect() {},
+      postMessage(message) { messages.push(message); queueMicrotask(() => respond(response)); },
+    };
+  } };
+  assert.deepEqual(await nativeRequest({ action: 'list-models' }), response);
+  response = { ok: true, models: [{ id: 'broken', label: 'Broken', efforts: [null] }], defaultModel: 'broken' };
+  await assert.rejects(nativeRequest({ action: 'list-models' }), /모델 목록/);
+  response = { ok: true, translation: '한 문단' };
+  await saveRoute({ provider: 'plan', model: 'chat-model', effort: 'high' });
+  const { routeVersion } = await readRoute();
+  await translate(sample, routeVersion);
+  assert.deepEqual(messages.at(-1), { action: 'translate', text: sample, language: '한국어', model: 'chat-model', effort: 'high' });
+  const texts = ['First', 'Second'];
+  response = { ok: true, translations: ['첫째', '둘째'] };
+  await translateBatch(texts, routeVersion);
+  assert.deepEqual(messages.at(-1), { action: 'translate-batch', texts, language: '한국어', model: 'chat-model', effort: 'high' });
+  await assert.rejects(saveRoute({ provider: 'plan', model: 'chat-model', effort: false }), /추론 강도/);
+});
+
 test('custom routing sends only selected text, instructions and chosen model to a single destination', async () => {
   const fetch = mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
     choices: [{ finish_reason: 'stop', message: { content: '번역 결과' } }],
@@ -64,10 +120,10 @@ test('custom routing sends only selected text, instructions and chosen model to 
   assert.equal(body.messages.length, 2);
   assert.equal(body.messages[0].role, 'system');
   const instructions = body.messages[0].content;
-  assert.match(instructions, /fluently into Korean/);
-  assert.match(instructions, /single word, short phrase, heading, label, or site name/);
-  assert.match(instructions, /Return only the translated content/);
-  assert.match(instructions, /Keep code, placeholders/);
+  assert.match(instructions, /into natural Korean/);
+  assert.match(instructions, /standalone words and labels/);
+  assert.match(instructions, /Return only the translation/);
+  assert.match(instructions, /Keep code and placeholders/);
   assert.doesNotMatch(instructions, /\{\{|\}\}/);
   assert.ok(!instructions.includes(sample));
   assert.deepEqual(body.messages[1], { role: 'user', content: sample });

@@ -1,5 +1,9 @@
+/*! DualRead modification: retain each model's published reasoning effort levels. */
 import { apiError, ChatGPTError, fetchRemote, isObject, jsonResponse } from "./errors.js";
-import type { ChatGPTModel } from "./types.js";
+import type { ChatGPTModel, ResponseReasoningEffort } from "./types.js";
+
+// The plan catalog also advertises Codex-only modes that Responses rejects.
+const responseEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies ResponseReasoningEffort[];
 
 export async function listModels(accessToken: string, signal: AbortSignal): Promise<ChatGPTModel[]> {
   const response = await fetchRemote("https://api.openai.com/v1/models", {
@@ -18,7 +22,9 @@ export async function listModels(accessToken: string, signal: AbortSignal): Prom
         typeof model.display_name !== "string" || !model.display_name.trim() || model.display_name.length > 200) {
       throw new ChatGPTError("invalid_model_catalog", "ChatGPT returned an incomplete model listing. Try again.", true, response.status);
     }
-    result.push({ slug: model.slug, displayName: model.display_name });
+    const levels = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
+    const reasoningEfforts = responseEfforts.filter(effort => levels.some((level: unknown) => isObject(level) && level.effort === effort));
+    result.push({ slug: model.slug, displayName: model.display_name, reasoningEfforts });
   }
   return result;
 }

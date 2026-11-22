@@ -18,7 +18,7 @@
     <main class="settings-wrap settings-layout">
       <header class="settings-heading">
         <h1>번역 환경설정</h1>
-        <p>번역할 글을 보낼 서비스와 계정을 관리하세요.</p>
+        <p>번역에 사용할 서비스, 모델과 추론 강도를 선택하세요.</p>
       </header>
       <div class="settings-columns">
         <form id="config" class="connection-panel" autocomplete="off" aria-labelledby="connectionTitle">
@@ -44,6 +44,18 @@
                 <button id="logout" class="account-button" type="button" hidden>로그아웃</button>
                 <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">사용량 관리 <span aria-hidden="true">↗</span></a>
               </div>
+              <div class="model-controls">
+                <div class="setting-field">
+                  <label for="planModel">번역 모델</label>
+                  <div class="provider-select"><select id="planModel" aria-describedby="catalogStatus" disabled><option value="">자동 선택</option></select></div>
+                </div>
+                <div class="setting-field">
+                  <label for="planEffort">추론 강도 <span class="optional" lang="en">effort</span></label>
+                  <div class="provider-select"><select id="planEffort" aria-describedby="planEffortHint" disabled><option value="">모델 기본값</option></select></div>
+                </div>
+                <small id="planEffortHint">추론 강도가 높을수록 번역에 더 오래 걸릴 수 있습니다.</small>
+                <p id="catalogStatus" role="status" aria-live="polite"></p>
+              </div>
               <details id="installHelp">
                 <summary>Mac 연결 프로그램 설치 방법</summary>
                 <div class="install-instructions">
@@ -61,9 +73,16 @@ node personal/native/install.mjs</code></pre>
                 <input id="endpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" aria-describedby="endpointHint" />
                 <small id="endpointHint">OpenAI Chat Completions 호환 주소를 입력하세요.</small>
               </div>
-              <div class="setting-field">
-                <label for="model">모델 ID</label>
-                <input id="model" type="text" spellcheck="false" placeholder="서버에 등록된 모델 ID" />
+              <div class="model-controls">
+                <div class="setting-field">
+                  <label for="model">모델 ID</label>
+                  <input id="model" type="text" spellcheck="false" maxlength="200" placeholder="서버에 등록된 모델 ID" />
+                </div>
+                <div class="setting-field">
+                  <label for="customEffort">추론 강도 <span class="optional" lang="en">effort</span></label>
+                  <div class="provider-select"><select id="customEffort" aria-describedby="customEffortHint"><option value="">서버 기본값</option></select></div>
+                </div>
+                <small id="customEffortHint">서버와 모델이 지원하는 추론 강도를 선택하세요. 기본값을 고르면 서버 설정을 따릅니다.</small>
               </div>
               <div class="setting-field">
                 <label for="apiKey">API 키 <span class="optional">선택</span></label>
