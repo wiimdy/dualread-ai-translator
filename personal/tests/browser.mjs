@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { mockTranslator, shortcutHtml, shortcutPagePath, verifyPageShortcuts } from './page-shortcuts.mjs';
-import { verifyProgressivePage } from './progressive-page.mjs';
+import { verifyBodyStream, verifyProgressivePage } from './progressive-page.mjs';
 import { verifyEditorialUnits } from './editorial-units.mjs';
 import { planCatalog, verifyPlanModelSettings, verifyRetainedModelControls } from './model-settings.mjs';
 import { readingHtml, readingPagePath, readingTranslation, verifyReadingLayout } from './reading-layout.mjs';
@@ -116,6 +116,9 @@ const run = async () => {
               queueMicrotask(() => onMessage(globalThis.planTestCatalog));
             } else if (message.action === 'translate-batch') {
               queueMicrotask(() => onMessage({ ok: true, translations: message.texts.map(() => translation) }));
+            } else if (message.action === 'translate' && message.stream && message.text === globalThis.bodyStreamTest?.source) {
+              globalThis.bodyStreamTest.reply = onMessage;
+              queueMicrotask(() => onMessage({ event: 'delta', text: globalThis.bodyStreamTest.first }));
             } else if (message.action === 'translate') {
               queueMicrotask(() => onMessage({ ok: true, translation }));
             } else {
@@ -220,6 +223,8 @@ const run = async () => {
     await command('all');
     await article.waitForFunction(() => !document.querySelector('.llm-bilingual-translation'));
     assert.equal(calls.length, 0);
+    await verifyBodyStream({ context, worker, origin: new URL(articleUrl).origin });
+    const expectedNativeTranslations = (await nativeCalls()).filter(({ message }) => message.action.startsWith('translate'));
 
     // Chrome's own site settings preapprove only this disposable mock endpoint.
     const permissions = await context.newPage();
@@ -283,7 +288,7 @@ const run = async () => {
     assert.ok(!selectionPayload.includes(original));
     for (const token of excluded) assert.ok(!selectionPayload.includes(token), `Unexpected selection context ${token}`);
     const allNative = await nativeCalls();
-    assert.deepEqual(allNative.filter(({ message }) => message.action.startsWith('translate')), planCalls);
+    assert.deepEqual(allNative.filter(({ message }) => message.action.startsWith('translate')), expectedNativeTranslations);
     assert.deepEqual(await worker.evaluate(() => globalThis.testRequests),
       [`${endpoint}/chat/completions`, `${endpoint}/chat/completions`]);
     await verifyPageShortcuts({ context, worker, origin: new URL(articleUrl).origin, calls, mock, prefix });

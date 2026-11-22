@@ -8,7 +8,7 @@ const MISSING_CONSENT = 'ChatGPT 계정에서 이 앱의 플랜 사용을 허용
 const MODEL_UNAVAILABLE = '선택한 모델을 이 구독에서 사용할 수 없습니다. 설정에서 다른 모델을 선택해 주세요.';
 const EFFORT_UNAVAILABLE = '선택한 모델이 이 추론 강도를 지원하지 않습니다. 설정에서 다른 강도를 선택해 주세요.';
 
-interface NativeRequest { action: unknown; language?: unknown; text?: unknown; texts?: unknown; model?: unknown; effort?: unknown }
+interface NativeRequest { action: unknown; language?: unknown; text?: unknown; texts?: unknown; model?: unknown; effort?: unknown; stream?: unknown }
 interface PlanModel { id: string; label: string; efforts: ResponseReasoningEffort[] }
 type PlanCatalog = { ok: true; models: PlanModel[]; defaultModel: string } | { ok: false; error: string };
 type NativeResult = PlanCatalog | { ok: true; connected?: boolean; translation?: string; translations?: string[] };
@@ -66,11 +66,13 @@ const listPlanModels = async (client: ChatGPTClient, signal: AbortSignal): Promi
   return { ok: true, models, defaultModel: defaultModel.id };
 };
 
-export const handleRequest = async (request: unknown, client: ChatGPTClient, signal: AbortSignal): Promise<NativeResult> => {
+export const handleRequest = async (
+  request: unknown, client: ChatGPTClient, signal: AbortSignal, onDelta?: (text: string) => void,
+): Promise<NativeResult> => {
   if (!request || typeof request !== 'object' || !('action' in request)) {
     return failure('지원하지 않는 요청입니다.');
   }
-  const { action, text, texts, language, model, effort } = request as NativeRequest;
+  const { action, text, texts, language, model, effort, stream } = request as NativeRequest;
   try {
     switch (action) {
       case 'status': {
@@ -114,6 +116,7 @@ export const handleRequest = async (request: unknown, client: ChatGPTClient, sig
           ...(selectedEffort ? { reasoningEffort: selectedEffort } : {}),
           instructions,
           input: [{ role: 'user', content }],
+          ...(action === 'translate' && stream === true && onDelta ? { onDelta } : {}),
           signal,
         });
         const translations = translatedItems(result.text, source.length);

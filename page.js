@@ -531,6 +531,7 @@
         }
         content.append(translation.slice(offset));
         item.node.className = 'llm-bilingual-translation is-done';
+        item.node.removeAttribute('aria-busy');
         item.node.replaceChildren(content);
         item.translation = translation;
         item.done = true;
@@ -553,7 +554,7 @@
         chunks.push(text.slice(start));
         return chunks;
     };
-    const requestOne = async (text, route, active) => {
+    const requestOne = async (text, route, active, firstChunk) => {
         let output = '';
         for (const chunk of chunksFor(text)) {
             if (!active())
@@ -562,7 +563,9 @@
                 output += chunk;
                 continue;
             }
-            const reply = await chrome.runtime.sendMessage({ type: 'personal-translate', text: chunk, routeVersion: route });
+            const reply = firstChunk ? await firstChunk(chunk) :
+                await chrome.runtime.sendMessage({ type: 'personal-translate', text: chunk, routeVersion: route });
+            firstChunk = undefined;
             if (reply?.ok !== true || typeof reply.translation !== 'string' || !reply.translation.trim()) {
                 throw new Error(typeof reply?.error === 'string' ? reply.error : '번역 응답이 비어 있습니다.');
             }
@@ -670,6 +673,11 @@
         let active = true;
         let failed = false;
         let started = false;
+        let leadChosen = false;
+        let leadAnchor;
+        let startingLead = false;
+        const leadLifetime = new AbortController();
+        const deferred = new Map();
         let initialObservation;
         let requests = 0;
         let singleOnly = false;
@@ -706,8 +714,15 @@
             if (!active || !anchor.isConnected || desired.get(anchor) !== source || anchor.closest(pageExclude))
                 return;
             const piece = pieces.get(anchor);
-            if (piece?.text === source)
-                showTranslation(resultFor(piece, route, true), translation);
+            if (piece?.text !== source)
+                return;
+            // An early title or byline can push the lead translation below the viewport.
+            if (leadAnchor?.isConnected && onScreen(leadAnchor) &&
+                (leadAnchor.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_PRECEDING)) {
+                deferred.set(anchor, { source, translation });
+                return;
+            }
+            showTranslation(resultFor(piece, route, true), translation);
         };
         const readSource = (anchor) => {
             if (!anchor.isConnected || anchor.closest(pageExclude))
@@ -802,18 +817,80 @@
                 }
             }
             entries.sort((a, b) => a.anchor.compareDocumentPosition(b.anchor) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1);
-            for (const { text, queue } of entries)
+            let lead;
+            for (const entry of entries) {
+                const { text, anchor, queue } = entry;
                 queues[queue].add(text);
+                if (!leadChosen && !lead && queue === 'reading' && anchor.matches('p,blockquote,[role="paragraph"]') &&
+                    !anchor.closest('header,aside,footer,nav,[role="banner"],[itemprop="author"]') &&
+                    !anchor.querySelector('time,[rel~="author"]') && /\p{L}/u.test(text))
+                    lead = entry;
+            }
+            if (!leadChosen && !lead) {
+                lead = entries.find(({ queue, anchor, text }) => queue === 'reading' && text.length >= COMPACT_LABEL_CHARS &&
+                    anchor.closest('article,main,[role="main"]') && !anchor.closest('header,a,h1,h2,h3,h4,h5,h6,[role="heading"]') &&
+                    !anchor.querySelector('a,time') && !anchor.matches('pre'));
+            }
             for (const text of queues.reading)
                 queues.other.delete(text);
             for (const text of [...queues.reading, ...queues.other])
                 queues.ahead.delete(text);
-            return queues;
+            return { ...queues, lead };
         };
-        const fetchGroup = async (texts) => {
+        const streamLead = (source, chunk) => new Promise((resolve, reject) => {
+            const port = chrome.runtime.connect({ name: 'personal-body-stream' });
+            const anchor = leadAnchor;
+            const signal = leadLifetime.signal;
+            const unblock = () => {
+                if (!startingLead)
+                    return;
+                startingLead = false;
+                pump();
+            };
+            const close = () => {
+                signal.removeEventListener('abort', cancel);
+                port.disconnect();
+            };
+            const cancel = () => {
+                close();
+                reject(new Error('본문 번역이 취소됐습니다.'));
+            };
+            port.onDisconnect.addListener(() => {
+                const error = chrome.runtime.lastError;
+                signal.removeEventListener('abort', cancel);
+                reject(new Error(error?.message || '본문 번역 연결이 종료됐습니다.'));
+            });
+            port.onMessage.addListener((reply) => {
+                if (reply?.event === 'started') {
+                    unblock();
+                    return;
+                }
+                if (reply?.event === 'delta' && typeof reply.text === 'string') {
+                    unblock();
+                    const piece = pieces.get(anchor);
+                    if (!reply.text || !active || failed || !anchor.isConnected || anchor.closest(pageExclude) ||
+                        desired.get(anchor) !== source || piece?.text !== source)
+                        return;
+                    let item = results.get(anchor);
+                    if (!item?.node.classList.contains('is-streaming')) {
+                        item = resultFor(piece, route, true);
+                        item.node.className = 'llm-bilingual-translation is-streaming';
+                        item.node.setAttribute('aria-busy', 'true');
+                        item.node.replaceChildren(document.createTextNode(''));
+                    }
+                    item.node.firstChild.appendData(reply.text);
+                    return;
+                }
+                close();
+                resolve(reply);
+            });
+            signal.addEventListener('abort', cancel, { once: true });
+            port.postMessage({ text: chunk, routeVersion: route });
+        });
+        const fetchGroup = async (texts, lead) => {
             let translations;
             if (texts.length === 1)
-                translations = [await requestOne(texts[0], route, () => active && !failed)];
+                translations = [await requestOne(texts[0], route, () => active && !failed, lead ? (chunk) => streamLead(texts[0], chunk) : undefined)];
             else {
                 const reply = await chrome.runtime.sendMessage({ type: 'personal-translate-batch', texts, routeVersion: route });
                 const malformed = reply?.code === 'INVALID_BATCH_OUTPUT' || (reply?.ok === true &&
@@ -841,8 +918,8 @@
             });
         };
         const pump = () => {
-            while (active && !failed && requests < MAX_REQUESTS && waiting.size) {
-                const { reading, other, ahead, behind } = nearbySources();
+            while (active && !failed && !startingLead && requests < MAX_REQUESTS && waiting.size) {
+                const { reading, other, ahead, behind, lead } = nearbySources();
                 const visible = reading.size > 0 || other.size > 0;
                 // Wait for observed sources before using free slots on look-ahead batches.
                 if (!reading.size && dirty.size && (!visible || !started))
@@ -852,11 +929,11 @@
                 const forwardBusy = firstPrefetched !== undefined && pendingPage.has(firstPrefetched);
                 const prioritizeReading = reading.size > 0 && (!other.size || readingStreak < MAX_READING_STREAK);
                 // After each wave of visible pieces, one free slot can prepare the next screen.
-                const reserveForward = prioritizeReading && ahead.size > 0 && !forwardBusy && requests > 0 && readingSincePrefetch >= MAX_REQUESTS;
+                const reserveForward = !lead && prioritizeReading && ahead.size > 0 && !forwardBusy && requests > 0 && readingSincePrefetch >= MAX_REQUESTS;
                 const foreground = visible && !reserveForward;
                 if (!foreground && forwardBusy && Array.from(pendingPage.keys()).some((text) => Array.from(subscribers.get(text) ?? []).some(onScreen)))
                     return;
-                const candidates = foreground ? (prioritizeReading ? reading : other) : ahead.size ? ahead : behind;
+                const candidates = lead ? new Set([lead.text]) : foreground ? (prioritizeReading ? reading : other) : ahead.size ? ahead : behind;
                 if (!candidates.size)
                     return;
                 const texts = [];
@@ -881,7 +958,12 @@
                 }
                 started = true;
                 requests++;
-                const task = fetchGroup(texts);
+                if (lead) {
+                    leadAnchor = lead.anchor;
+                    leadChosen = true;
+                    startingLead = true;
+                }
+                const task = fetchGroup(texts, Boolean(lead));
                 for (const text of texts)
                     pendingPage.set(text, task);
                 void task.catch((error) => {
@@ -893,6 +975,34 @@
                     for (const text of texts)
                         if (pendingPage.get(text) === task)
                             pendingPage.delete(text);
+                    if (lead) {
+                        const item = results.get(lead.anchor);
+                        if (active && item?.node.classList.contains('is-streaming'))
+                            removeResult(lead.anchor);
+                        leadAnchor = undefined;
+                        startingLead = false;
+                        if (active && deferred.size) {
+                            const node = item?.done && item.node.isConnected ? item.node : undefined;
+                            const before = node?.getBoundingClientRect();
+                            const preceding = Array.from(deferred.keys());
+                            for (const [anchor, value] of deferred)
+                                render(anchor, value.source, value.translation);
+                            if (node && before && before.bottom > 0 && before.top < innerHeight) {
+                                // Keep the line being read in place as earlier translations expand the page.
+                                for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+                                    const shift = node.getBoundingClientRect().top - before.top;
+                                    if (shift <= 1)
+                                        break;
+                                    if (parent === document.scrollingElement ||
+                                        (parent.scrollHeight > parent.clientHeight && /^(auto|scroll|overlay)$/.test(getComputedStyle(parent).overflowY) &&
+                                            preceding.some((anchor) => parent.contains(anchor)))) {
+                                        parent.scrollBy({ top: shift, behavior: 'instant' });
+                                    }
+                                }
+                            }
+                            deferred.clear();
+                        }
+                    }
                     requests--;
                     pump();
                 });
@@ -1057,6 +1167,8 @@
         }
         stopPage = () => {
             active = false;
+            leadLifetime.abort();
+            deferred.clear();
             window.clearTimeout(scanTimer);
             visibility.disconnect();
             changed.disconnect();

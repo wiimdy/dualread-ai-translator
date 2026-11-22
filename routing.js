@@ -91,22 +91,45 @@ export const saveRoute = async (value) => {
 const validPlanModel = (model) => isRecord(model) &&
     typeof model.id === 'string' && !!model.id && typeof model.label === 'string' &&
     Array.isArray(model.efforts) && model.efforts.every((effort) => typeof effort === 'string' && !!effort);
-export const nativeRequest = (message) => new Promise((resolve, reject) => {
+export const nativeRequest = (message, stream) => new Promise((resolve, reject) => {
+    stream?.signal.throwIfAborted();
     const port = chrome.runtime.connectNative(NATIVE_HOST);
-    const timeout = setTimeout(() => {
+    let finished = false;
+    const finish = () => {
+        finished = true;
+        clearTimeout(timeout);
+        stream?.signal.removeEventListener('abort', abort);
+    };
+    const stop = (error) => {
+        if (finished)
+            return;
+        finish();
+        reject(error);
         port.disconnect();
-        reject(new Error('연결 시간이 초과됐습니다. 설정에서 연결 상태를 확인해 주세요.'));
-    }, message.action === 'login' ? 300_000 : 120_000);
-    let received = false;
+    };
+    const abort = () => stop(stream?.signal.reason);
+    const timeout = setTimeout(() => stop(new Error('연결 시간이 초과됐습니다. 설정에서 연결 상태를 확인해 주세요.')), message.action === 'login' ? 300_000 : 120_000);
+    stream?.signal.addEventListener('abort', abort, { once: true });
     port.onDisconnect.addListener(() => {
         const hostError = chrome.runtime.lastError;
-        clearTimeout(timeout);
-        if (!received)
-            reject(new Error(hostError ? '이 Mac의 ChatGPT 연결 프로그램을 열 수 없습니다. 설치 안내를 확인해 주세요.' : 'ChatGPT 연결이 종료됐습니다.'));
+        if (finished)
+            return;
+        finish();
+        reject(new Error(hostError ? '이 Mac의 ChatGPT 연결 프로그램을 열 수 없습니다. 설치 안내를 확인해 주세요.' : 'ChatGPT 연결이 종료됐습니다.'));
     });
     port.onMessage.addListener((reply) => {
-        received = true;
-        clearTimeout(timeout);
+        if (finished)
+            return;
+        if (stream && message.action === 'translate' && isRecord(reply) && reply.event === 'delta' && typeof reply.text === 'string') {
+            try {
+                stream.onDelta(reply.text);
+            }
+            catch (error) {
+                stop(error);
+            }
+            return;
+        }
+        finish();
         port.disconnect();
         if (!isRecord(reply) || reply.ok !== true) {
             reject(new Error(isRecord(reply) && typeof reply.error === 'string' ? reply.error : 'ChatGPT 연결에 실패했습니다.'));
@@ -137,9 +160,15 @@ export const nativeRequest = (message) => new Promise((resolve, reject) => {
             translation: typeof reply.translation === 'string' ? reply.translation : undefined,
         });
     });
-    port.postMessage(message);
+    try {
+        port.postMessage(stream && message.action === 'translate' ? { ...message, stream: true } : message);
+        stream?.onStarted?.();
+    }
+    catch (error) {
+        stop(error);
+    }
 });
-export const translateBatch = async (texts, routeVersion) => {
+export const translateBatch = async (texts, routeVersion, stream) => {
     if (!validSourceBatch(texts))
         throw new Error(INVALID_BATCH_INPUT);
     const route = await readRoute();
@@ -153,7 +182,7 @@ export const translateBatch = async (texts, routeVersion) => {
                 throw new Error(INVALID_BATCH_OUTPUT);
             return result.translations;
         }
-        const result = await nativeRequest({ action: 'translate', text: texts[0], language: '한국어', ...options });
+        const result = await nativeRequest({ action: 'translate', text: texts[0], language: '한국어', ...options }, stream);
         if (!result.translation?.trim())
             throw new Error('ChatGPT가 번역문을 반환하지 않았습니다.');
         return [result.translation.trim()];
@@ -167,14 +196,17 @@ export const translateBatch = async (texts, routeVersion) => {
     // Match DualRead's OpenAI-compatible base URL and full-endpoint convention.
     const url = route.endpoint.endsWith('/chat/completions') ? route.endpoint : route.endpoint + '/chat/completions';
     const { instructions, content } = translationInput(texts, 'Korean');
-    const response = await fetch(url, {
+    stream?.signal.throwIfAborted();
+    const pending = fetch(url, {
         method: 'POST', headers, redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store',
-        signal: AbortSignal.timeout(28_000),
+        signal: stream ? AbortSignal.any([stream.signal, AbortSignal.timeout(28_000)]) : AbortSignal.timeout(28_000),
         body: JSON.stringify({ model: route.model, ...(route.effort && { reasoning_effort: route.effort }), messages: [
                 { role: 'system', content: instructions },
                 { role: 'user', content },
             ] }),
     });
+    stream?.onStarted?.();
+    const response = await pending;
     if (!response.ok)
         throw new Error(`모델 서버가 HTTP ${response.status}로 응답했습니다. 연결 설정을 확인하세요.`);
     const choice = (await response.json())?.choices?.[0];
@@ -187,4 +219,4 @@ export const translateBatch = async (texts, routeVersion) => {
         throw new Error(INVALID_BATCH_OUTPUT);
     return translations;
 };
-export const translate = async (text, routeVersion) => (await translateBatch([text], routeVersion))[0];
+export const translate = async (text, routeVersion, stream) => (await translateBatch([text], routeVersion, stream))[0];

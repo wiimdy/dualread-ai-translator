@@ -112,6 +112,39 @@ test('validates request size and target before any account or network access', a
   assert.match((await invoke(request, provider)).error, /계정을 연결/);
 });
 
+test('opt-in single translations publish answer deltas before the final response', async () => {
+  const single = { action: 'translate', language: 'ko', text: 'hello' };
+  const signal = new AbortController().signal;
+  const received = [];
+  const client = {
+    getSession: async () => active,
+    listModels: async () => [{ slug: 'text-model' }],
+    async streamResponse({ onDelta }) {
+      onDelta?.('첫');
+      onDelta?.(' 문장');
+      return { text: '첫 문장' };
+    },
+  };
+  const receive = (text) => received.push(text);
+  const final = await handleRequest({ ...single, stream: true }, client, signal, receive);
+  assert.deepEqual(received, ['첫', ' 문장']);
+  assert.deepEqual(final, { ok: true, translation: '첫 문장' });
+  for (const legacy of [single, { ...single, stream: false }, { ...single, stream: 'true' },
+    { action: 'translate-batch', language: 'ko', texts: ['hello'], stream: true }]) {
+    received.length = 0;
+    assert.equal((await handleRequest(legacy, client, signal, receive)).ok, true);
+    assert.deepEqual(received, []);
+  }
+  client.streamResponse = async ({ onDelta }) => {
+    onDelta('미완성');
+    throw new Error('private details');
+  };
+  const failure = await handleRequest({ ...single, stream: true }, client, signal, receive);
+  assert.deepEqual(received, ['미완성']);
+  assert.equal(failure.ok, false);
+  assert.doesNotMatch(failure.error, /private details/);
+});
+
 test('one plan model lookup and one request translate a batch, with strict item matching', async () => {
   const texts = ['One', 'Two "quoted"\nlines'];
   const input = { action: 'translate-batch', texts, language: 'ko', url: 'https://private.invalid' };

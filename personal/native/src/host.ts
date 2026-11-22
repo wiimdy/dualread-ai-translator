@@ -6,6 +6,7 @@ import { handleRequest } from './operations.js';
 import { frameResponse, readRequest } from './protocol.js';
 
 const EXTENSION_ORIGIN = 'chrome-extension://kbdnibfjndljjlghoooplbholpkehpao/';
+const MAX_PREVIEW_CHARS = 32 * 1024;
 const helper = join(dirname(process.argv[1]), 'keychain-helper');
 const crypt = (action: 'encrypt' | 'decrypt', input: Uint8Array | string): Buffer => {
   return execFileSync(helper, [action], {
@@ -35,16 +36,23 @@ const run = async () => {
   let result: unknown = invalid;
   const lifetime = new AbortController();
   const cancel = () => lifetime.abort();
+  process.stdout.on('error', () => { cancel(); process.stdin.destroy(); });
   try {
     if (process.argv[2] === EXTENSION_ORIGIN) {
       const request = await readRequest(process.stdin);
       process.stdin.once('end', cancel);
       process.stdin.once('error', cancel);
       process.stdin.resume();
-      result = await handleRequest(request, createClient(), lifetime.signal);
+      let previewChars = 0;
+      let previewWritable = true;
+      result = await handleRequest(request, createClient(), lifetime.signal, (text) => {
+        if (!text || !previewWritable || lifetime.signal.aborted) return;
+        previewChars += text.length;
+        // A slow reader can keep the last prefix until the authoritative final frame arrives.
+        previewWritable = previewChars <= MAX_PREVIEW_CHARS && process.stdout.write(frameResponse({ event: 'delta', text }));
+      });
     }
   } catch { result = invalid; }
-  process.stdout.on('error', () => process.stdin.destroy());
-  process.stdout.write(frameResponse(result), () => process.stdin.destroy());
+  if (!process.stdout.destroyed) process.stdout.write(frameResponse(result), () => process.stdin.destroy());
 };
 void run();

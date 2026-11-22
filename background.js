@@ -1,6 +1,7 @@
 import { isRecord, nativeRequest, optionsState, readRoute, saveRoute, translate, translateBatch } from './routing.js';
 import { INVALID_BATCH_OUTPUT } from './translation-prompt.js';
 const isOwnView = (sender, page) => sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL(page);
+const isOwnPage = (sender) => sender?.id === chrome.runtime.id && sender?.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//i.test(sender.url ?? '');
 const dispatch = async (msg, sender) => {
     const options = isOwnView(sender, 'options.html');
     if (msg.type === 'personal-state') {
@@ -27,8 +28,7 @@ const dispatch = async (msg, sender) => {
         }
         return { ok: true, connected: reply.connected === true };
     }
-    if ((msg.type === 'personal-translate' || msg.type === 'personal-translate-batch') && sender.id === chrome.runtime.id &&
-        sender.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//i.test(sender.url ?? '')) {
+    if ((msg.type === 'personal-translate' || msg.type === 'personal-translate-batch') && isOwnPage(sender)) {
         if (msg.type === 'personal-translate-batch') {
             return { ok: true, translations: await translateBatch(msg.texts, msg.routeVersion) };
         }
@@ -45,6 +45,39 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         respond({ ok: false, error: detail, code });
     });
     return true;
+});
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'personal-body-stream')
+        return;
+    if (!isOwnPage(port.sender)) {
+        port.disconnect();
+        return;
+    }
+    const controller = new AbortController();
+    port.onDisconnect.addListener(() => controller.abort());
+    const post = (reply) => {
+        if (controller.signal.aborted)
+            return;
+        try {
+            port.postMessage(reply);
+        }
+        catch {
+            controller.abort();
+        }
+    };
+    const begin = (message) => {
+        port.onMessage.removeListener(begin);
+        if (!isRecord(message)) {
+            post({ ok: false, error: '허용되지 않은 요청입니다.' });
+            return;
+        }
+        void translate(message.text, message.routeVersion, {
+            signal: controller.signal,
+            onStarted: () => post({ event: 'started' }),
+            onDelta: (text) => post({ event: 'delta', text }),
+        }).then((translation) => post({ ok: true, translation }), (error) => post({ ok: false, error: error instanceof Error ? error.message : '번역에 실패했습니다.' }));
+    };
+    port.onMessage.addListener(begin);
 });
 const launch = async (tabId, type) => {
     try {

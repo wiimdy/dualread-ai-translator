@@ -101,6 +101,111 @@ test('subscription forwards selected model and effort, and validates the native 
   await assert.rejects(saveRoute({ provider: 'plan', model: 'chat-model', effort: false }), /추론 강도/);
 });
 
+test('subscription streams answer deltas on request, accepts a final-only host and cancels on disconnect', async () => {
+  const deltas = [];
+  const controller = new AbortController();
+  let dispatched = 0;
+  const stream = { signal: controller.signal, onDelta: (text) => deltas.push(text),
+    onStarted: () => assert.equal(++dispatched, requests) };
+  const { routeVersion } = await readRoute();
+  let finishRequest;
+  let started;
+  let disconnects = 0;
+  let requests = 0;
+  chrome.runtime = { connectNative: () => {
+    let receive;
+    return {
+      onMessage: { addListener: (handler) => { receive = handler; } },
+      onDisconnect: { addListener() {} },
+      disconnect() { disconnects++; },
+      postMessage(message) {
+        requests++;
+        assert.deepEqual(message, { action: 'translate', text: sample, language: '한국어', stream: true });
+        finishRequest = receive;
+        started();
+      },
+    };
+  } };
+  const request = async () => {
+    const ready = new Promise((resolve) => { started = resolve; });
+    const result = translate(sample, routeVersion, stream);
+    await ready;
+    return { result };
+  };
+  const streaming = await request();
+  finishRequest({ event: 'delta', text: '첫 ' });
+  finishRequest({ event: 'delta', text: '문장' });
+  assert.deepEqual(deltas, ['첫 ', '문장']);
+  assert.equal(disconnects, 0);
+  finishRequest({ ok: true, translation: '첫 문장.' });
+  assert.equal(await streaming.result, '첫 문장.');
+  const legacy = await request();
+  finishRequest({ ok: true, translation: '레거시' });
+  assert.equal(await legacy.result, '레거시');
+  const interrupted = await request();
+  controller.abort();
+  await assert.rejects(interrupted.result, { name: 'AbortError' });
+  finishRequest({ event: 'delta', text: '늦은 응답' });
+  assert.deepEqual(deltas, ['첫 ', '문장']);
+  await assert.rejects(translate(sample, routeVersion, stream), { name: 'AbortError' });
+  await assert.rejects(translate(sample, 'stale', stream), /전송 대상/);
+  assert.equal(disconnects, 3);
+  assert.equal(requests, 3);
+  assert.equal(dispatched, 3);
+});
+
+test('a custom first-body request keeps its original format and aborts with the page', async () => {
+  await saveRoute({ provider: 'custom', endpoint, model: 'chosen' });
+  const { routeVersion } = await readRoute();
+  const controller = new AbortController();
+  const stream = { signal: controller.signal, onDelta: () => assert.fail('Unexpected custom stream') };
+  let started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, endpoint + '/chat/completions');
+    assert.deepEqual(Object.keys(JSON.parse(options.body)).sort(), ['messages', 'model']);
+    started();
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason));
+    });
+  });
+  const result = translate(sample, routeVersion, stream);
+  await ready;
+  controller.abort();
+  await assert.rejects(result, { name: 'AbortError' });
+});
+
+test('the first-body port accepts only this extension in the top frame of a web page', async () => {
+  let connect;
+  const unused = { addListener() {} };
+  chrome.runtime = {
+    id: 'dualread', onMessage: unused, onInstalled: unused, onConnect: { addListener: (listener) => { connect = listener; } },
+  };
+  chrome.contextMenus = { onClicked: unused };
+  chrome.commands = { onCommand: unused };
+  await import('../dist/background.js');
+  const sender = { id: 'dualread', tab: { id: 1 }, frameId: 0, url: 'https://example.com/article' };
+  for (const invalid of [undefined, { ...sender, id: 'unrelated' }, { ...sender, tab: {} },
+    { ...sender, frameId: 1 }, { ...sender, url: 'file:///private' }]) {
+    let rejected = false;
+    connect({ name: 'personal-body-stream', sender: invalid, disconnect: () => { rejected = true; } });
+    assert.equal(rejected, true);
+  }
+  let begin;
+  const received = [];
+  const messageEvent = {
+    addListener: (handler) => { begin = handler; },
+    removeListener: (handler) => { assert.equal(begin, handler); begin = undefined; },
+  };
+  connect({ name: 'personal-body-stream', sender, onMessage: messageEvent, onDisconnect: unused,
+    postMessage: (message) => received.push(message) });
+  begin({ text: sample, routeVersion: 'stale' });
+  assert.equal(begin, undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(received[0].ok, false);
+  assert.match(received[0].error, /전송 대상/);
+});
+
 test('custom routing sends only selected text, instructions and chosen model to a single destination', async () => {
   const fetch = mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
     choices: [{ finish_reason: 'stop', message: { content: '번역 결과' } }],
