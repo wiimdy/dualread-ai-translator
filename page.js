@@ -801,6 +801,10 @@
             // Many news cards use an ordinary link for the headline.
             return text.length >= READING_TEXT_CHARS && /\s/u.test(text) && Boolean(anchor.closest('main,article,[role="main"]'));
         };
+        const bodyParagraph = 'p,blockquote,[role="paragraph"]';
+        const isBodyParagraph = (anchor) => anchor.matches(bodyParagraph) &&
+            !anchor.closest('header,aside,footer,' + navigation + ',[role="banner"],[itemprop="author"]') &&
+            !anchor.querySelector('time,[rel~="author"]');
         const nearbySources = () => {
             const queues = { reading: new Set(), other: new Set(), ahead: new Set(), behind: new Set() };
             const entries = [];
@@ -821,9 +825,7 @@
             for (const entry of entries) {
                 const { text, anchor, queue } = entry;
                 queues[queue].add(text);
-                if (!leadChosen && !lead && queue === 'reading' && anchor.matches('p,blockquote,[role="paragraph"]') &&
-                    !anchor.closest('header,aside,footer,nav,[role="banner"],[itemprop="author"]') &&
-                    !anchor.querySelector('time,[rel~="author"]') && /\p{L}/u.test(text))
+                if (!leadChosen && !lead && queue === 'reading' && isBodyParagraph(anchor) && /\p{L}/u.test(text))
                     lead = entry;
             }
             if (!leadChosen && !lead) {
@@ -1161,6 +1163,21 @@
                             track(node.parentElement);
                     }
                 }
+            }
+            // A long header can span several scan slices before the observer discovers the visible body.
+            const main = body.querySelector('main,[role="main"]') ?? body;
+            const candidates = scrollY > innerHeight ? tracked : main.querySelectorAll(bodyParagraph);
+            let inspected = 0;
+            for (const anchor of candidates) {
+                if (++inspected > VIEWPORT_NEIGHBORS * 2)
+                    break;
+                if (!isBodyParagraph(anchor) || !onScreen(anchor) || anchor.closest(pageExclude) || pageAnchor(anchor) !== anchor)
+                    continue;
+                track(anchor);
+                nearby.add(anchor);
+                refresh(anchor);
+                if (waiting.size)
+                    break;
             }
             roots.add(body);
             schedule();

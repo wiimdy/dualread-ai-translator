@@ -18,38 +18,48 @@ const article = `<!doctype html><meta charset="utf-8"><style>
 
 export const verifyBodyStream = async ({ context, worker, origin }) => {
   const page = await context.newPage();
-  const url = origin + '/article-streaming';
   const body = 'The cache_size setting limits how many records the service can retain. ' +
     'The service keeps recent records in memory so that readers can return to a document without waiting for another download.';
   const first = '서비스가 보관할 수 있는 레코드 수는 ';
   const second = 'cache_size 설정으로 제한합니다.';
-  const html = `<!doctype html><meta charset="utf-8"><style>
-    html { overflow-anchor: none; } body { min-height: 300vh; } header { padding-top: 32vh; }
-  </style><nav>News and updates</nav>
-    <main><article><header><h1>A guide to local storage</h1><p>Written by the editorial team</p></header>
-    <p id="body">${body.replace('cache_size', '<code>cache_size</code>')}</p>
-    <p id="following">Another paragraph also explains local storage.</p></article></main>`;
   const partial = page.locator('.llm-bilingual-translation.is-streaming');
   const final = page.locator('.llm-bilingual-translation.is-done').filter({ hasText: first.trim() });
   const send = (frame) => worker.evaluate((value) => globalThis.bodyStreamTest.reply(value), frame);
-  await page.route(url, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
   const press = await shortcutDriver(context, page);
   try {
     for (const outcome of ['toggle', 'route', 'failure', 'complete']) {
+      const url = `${origin}/article-streaming/${outcome}`;
+      const marker = `Fixture ${outcome}: `;
+      const source = marker + body;
+      // A large offscreen menu can keep initial DOM discovery busy while the heading is already observed.
+      const offscreen = outcome === 'toggle' ? `<div class="offscreen-menu">${Array.from({ length: 2400 },
+        (_, index) => `<span>${marker}Offscreen entry ${index}</span>`).join('')}</div>` : '';
+      const html = `<!doctype html><meta charset="utf-8"><style>
+        html { overflow-anchor: none; } body { min-height: 300vh; } header { padding-top: 32vh; }
+        .offscreen-menu { position:fixed; top:-500vh; left:-500vw; height:20px; width:200px; overflow:hidden; }
+        .offscreen-menu span { display:block; }
+      </style><nav>${marker}News and updates</nav>
+        <main><article><header><h1>${marker}A guide to local storage</h1><p>${marker}Written by the editorial team</p></header>
+        ${offscreen}<p id="body">${source.replace('cache_size', '<code>cache_size</code>')}</p>
+        <p id="following">${marker}Another paragraph also explains local storage.</p></article></main>`;
+      await page.route(url, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
       await page.goto(url);
       await page.bringToFront();
       const offset = await worker.evaluate(({ source, first }) => {
         globalThis.bodyStreamTest = { source, first };
         return globalThis.nativeTestCalls.length;
-      }, { source: body, first });
+      }, { source, first });
       await press('A');
       await partial.waitFor({ state: 'visible' });
       assert.equal((await partial.innerText()).trim(), first.trim());
       assert.equal(await final.count(), 0);
-      const started = await worker.evaluate((offset) => globalThis.nativeTestCalls.slice(offset)
-        .map(({ message }) => message).filter((message) => message.action.startsWith('translate')), offset);
-      assert.ok(started[0].stream && started[0].text === body, 'The main paragraph should be requested before the heading and byline');
-      assert.equal(started.filter((request) => request.text === body || request.texts?.includes(body)).length, 1);
+      const currentRequests = () => worker.evaluate(({ offset, marker }) => globalThis.nativeTestCalls.slice(offset)
+        .map(({ message }) => message).filter((message) => (message.texts ?? [message.text])
+          .some((text) => text?.includes(marker))), { offset, marker });
+      const started = await currentRequests();
+      assert.ok(started[0]?.stream && started[0].text === source,
+        `Expected the lead paragraph first in ${outcome}, received ${JSON.stringify(started[0])}`);
+      assert.equal(started.filter((request) => request.text === source || request.texts?.includes(source)).length, 1);
       if (outcome === 'complete') {
         await send({ event: 'delta', text: second });
         await page.waitForFunction((text) => document.querySelector('.is-streaming')?.textContent === text, first + second);
@@ -96,6 +106,8 @@ export const verifyBodyStream = async ({ context, worker, origin }) => {
       assert.equal(await partial.count(), 0);
       assert.equal(await final.count(), 0);
       assert.equal(await page.locator('#body code').textContent(), 'cache_size');
+      assert.ok(!(await currentRequests()).some((request) => (request.texts ?? [request.text]).some((text) => text.includes('Offscreen entry'))),
+        'The offscreen menu should never reach the provider');
     }
   } finally {
     await worker.evaluate(() => { delete globalThis.bodyStreamTest; });
