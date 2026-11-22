@@ -26,6 +26,7 @@ export const verifyBodyStream = async ({ context, worker, origin }) => {
   const final = page.locator('.llm-bilingual-translation.is-done').filter({ hasText: first.trim() });
   const send = (frame) => worker.evaluate((value) => globalThis.bodyStreamTest.reply(value), frame);
   const press = await shortcutDriver(context, page);
+  const renderer = await context.newCDPSession(page);
   try {
     for (const outcome of ['toggle', 'route', 'failure', 'complete']) {
       const url = `${origin}/article-streaming/${outcome}`;
@@ -49,8 +50,10 @@ export const verifyBodyStream = async ({ context, worker, origin }) => {
         globalThis.bodyStreamTest = { source, first };
         return globalThis.nativeTestCalls.length;
       }, { source, first });
+      if (outcome === 'toggle') await renderer.send('Emulation.setCPUThrottlingRate', { rate: 8 });
       await press('A');
       await partial.waitFor({ state: 'visible' });
+      if (outcome === 'toggle') await renderer.send('Emulation.setCPUThrottlingRate', { rate: 1 });
       assert.equal((await partial.innerText()).trim(), first.trim());
       assert.equal(await final.count(), 0);
       const currentRequests = () => worker.evaluate(({ offset, marker }) => globalThis.nativeTestCalls.slice(offset)
