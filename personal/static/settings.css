@@ -1,0 +1,161 @@
+.options {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--ui-font);
+  font-size: 15px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+.options [hidden] { display: none !important; }
+.settings-wrap { width: min(1080px, calc(100% - 88px)); margin-inline: auto; }
+.settings-masthead { display: block; border-bottom: 1px solid var(--line); }
+.masthead-inner { display: flex; align-items: center; gap: 19px; min-height: 74px; }
+.masthead-location { border-inline-start: 1px solid var(--line); padding-inline-start: 19px; font-size: 13px; color: var(--muted); }
+.options main.settings-layout { max-width: none; margin: 0 auto; padding: 48px 0 80px; }
+.settings-heading { display: block; margin: 0 0 33px; }
+.settings-heading h1 {
+  margin: 0;
+  font-family: var(--ui-font);
+  font-size: clamp(37px, 4.2vw, 55px);
+  font-weight: 740;
+  letter-spacing: -.075em;
+  line-height: 1.17;
+}
+.settings-heading p { margin: 13px 0 0; color: var(--muted); font-size: 15px; }
+.settings-columns { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: start; gap: clamp(22px, 3.2vw, 40px); }
+.connection-panel, .preview-panel { min-width: 0; }
+.connection-panel { border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+.connection-fields { padding: 27px 29px 16px; }
+.connection-fields h2, .preview-toolbar h2 {
+  margin: 0;
+  font: 710 20px/1.4 var(--ui-font);
+  letter-spacing: -.055em;
+}
+.setting-field { display: grid; gap: 7px; }
+.connection-fields > .setting-field { margin-top: 22px; }
+.setting-field label, .account-heading h3 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 670; letter-spacing: -.025em; }
+.provider-select { position: relative; }
+.provider-select::after {
+  content: '';
+  position: absolute;
+  top: calc(50% - 5px);
+  right: 18px;
+  width: 7px;
+  height: 7px;
+  pointer-events: none;
+  border: solid var(--muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.options .setting-field :is(input,select) {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  background: var(--surface);
+  color: var(--ink);
+}
+.options .setting-field select { appearance: none; padding-inline-end: 35px; font-weight: 590; cursor: pointer; }
+.options .setting-field input::placeholder { color: var(--muted); opacity: .85; }
+.options :is(button, select, input, summary, a):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.plan-block, .custom-fields { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 21px; }
+.account-heading { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.options #accountStatus { margin: 0; color: var(--muted); font-size: 12px; font-weight: 560; }
+.options #accountStatus:not(:empty)::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  margin-inline-end: 6px; vertical-align: .14em; background: currentColor;
+}
+.options #accountStatus[data-connected="true"] { color: var(--accent); }
+.options [role="status"][data-error="true"] { color: var(--error, #a93a36); }
+.route-note { margin: 10px 0 16px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.options .account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; }
+.options .account-button, .options .primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 42px;
+  border: 1px solid transparent; border-radius: 8px; padding: 8px 16px; font: 650 14px/1.4 var(--ui-font); cursor: pointer;
+}
+.options .account-button { background: var(--ink); color: var(--surface); }
+.options .account-button:hover:enabled { background: color-mix(in srgb, var(--ink) 85%, var(--surface)); }
+.options .primary { background: var(--accent); color: var(--on-accent); }
+.options .primary:hover:enabled { background: color-mix(in srgb, var(--accent) 84%, var(--ink)); }
+.options button:disabled { opacity: .6; cursor: wait; }
+.options .account-actions a { color: var(--muted); font-size: 13px; font-weight: 560; text-decoration: none; }
+.options .account-actions a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.options #installHelp { margin: 18px 0 0; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); }
+#installHelp summary { display: flex; align-items: center; gap: 8px; width: fit-content; min-height: 30px; list-style: none; font-size: 13px; font-weight: 550; cursor: pointer; }
+#installHelp summary::-webkit-details-marker { display: none; }
+#installHelp summary::before { content: '+'; width: 12px; color: var(--accent); font: 450 18px/1 var(--ui-font); text-align: center; }
+#installHelp[open] summary::before { content: '−'; }
+.install-instructions { padding-inline-start: 20px; font-size: 13px; }
+.install-instructions p { margin-block: 9px; }
+.install-instructions pre { margin: 10px 0; padding: 10px; border-radius: 6px; background: var(--canvas); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; font-size: 12px; }
+.custom-fields { display: grid; gap: 16px; padding-bottom: 7px; }
+.setting-field small, .setting-field .optional { color: var(--muted); font-size: 12px; font-weight: 450; }
+.optional { margin-left: 4px; }
+.options .settings-footer { display: flex; gap: 12px; justify-content: flex-end; align-items: center; margin: 0; padding: 16px 29px; border-top: 1px solid var(--line); }
+.settings-footer #status { flex: 1; margin: 0; font-size: 13px; color: var(--muted); }
+.settings-footer .primary { min-width: 92px; }
+
+.preview-panel {
+  border: 1px solid color-mix(in srgb, var(--line) 72%, var(--accent));
+  border-radius: 18px;
+  background: var(--tint);
+  padding: 24px 25px 27px;
+}
+.preview-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 19px; }
+.preview-toolbar h2 { color: var(--ink); font-size: 17px; }
+.preview-switch { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 28px; cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 570; }
+.preview-switch input { position: absolute; width: 100%; height: 100%; margin: 0; border: 0; opacity: 0; cursor: pointer; }
+.switch-track { width: 28px; height: 16px; padding: 2px; border-radius: 20px; background: var(--muted); pointer-events: none; }
+.switch-track::before { content: ''; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--on-accent); }
+.preview-switch input:checked + .switch-track { background: var(--accent); }
+.preview-switch input:checked + .switch-track::before { transform: translateX(12px); }
+.preview-switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 3px; }
+.preview-paper {
+  isolation: isolate;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--line) 80%, var(--accent));
+  border-radius: 10px; overflow: hidden;
+  box-shadow: 0 3px 0 -1px var(--surface), 0 4px 0 -1px var(--line), 0 12px 23px -14px color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.preview-photo { display: block; width: 100%; height: auto; aspect-ratio: 2.4 / 1; object-fit: cover; object-position: 50% 54%; }
+.preview-reading { padding: 21px 24px 25px; }
+.preview-languages { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.preview-languages span { color: var(--accent); }
+.preview-original { max-inline-size: 23ch; margin: 10px 0 0; color: var(--ink); font: 500 clamp(30px, 3vw, 38px)/1.08 var(--display-font, Georgia, serif); letter-spacing: -.014em; text-wrap: balance; }
+.preview-translation { margin: 14px 0 0; padding-inline-start: 11px; border-inline-start: 2px solid var(--accent); color: var(--ink); font-size: 15px; line-height: 1.55; letter-spacing: -.027em; }
+.options dialog { max-width: min(400px, calc(100% - 36px)); padding: 26px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
+.options dialog::backdrop { background: #15152578; }
+.options dialog h2 { margin: 0 0 12px; font-size: 21px; }
+.options dialog p { margin: 0 0 18px; color: var(--muted); }
+.options dialog form { text-align: end; }
+@media (prefers-reduced-motion: no-preference) {
+  .switch-track, .switch-track::before { transition: background-color .15s ease, transform .15s ease; }
+}
+@media (max-width: 820px) {
+  .settings-wrap { width: min(100% - 48px, 650px); }
+  .settings-columns { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .options main.settings-layout { padding: 34px 0 48px; }
+  .preview-panel { padding: 22px 25px 27px; }
+  .preview-photo { aspect-ratio: 2.8 / 1; }
+}
+@media (max-width: 480px) {
+  .settings-wrap { width: calc(100% - 32px); }
+  .masthead-inner { min-height: 58px; gap: 12px; }
+  .masthead-location { padding-inline-start: 12px; }
+  .settings-heading { margin-bottom: 24px; }
+  .settings-heading h1 { font-size: 36px; }
+  .settings-heading p { font-size: 14px; }
+  .connection-fields { padding: 20px 19px 14px; }
+  .options .settings-footer { padding: 13px 19px; }
+  .preview-panel { padding: 17px 16px 22px; }
+  .preview-reading { padding: 18px; }
+}
+@media (forced-colors: active) {
+  .switch-track { border: 1px solid ButtonText; background: Canvas; }
+  .switch-track::before { background: ButtonText; width: 10px; height: 10px; }
+  .preview-switch input:checked + .switch-track { background: Highlight; }
+}

@@ -14,6 +14,8 @@ const logout = document.querySelector<HTMLButtonElement>('#logout')!;
 const save = document.querySelector<HTMLButtonElement>('#save')!;
 const form = document.querySelector<HTMLFormElement>('#config')!;
 const welcome = document.querySelector<HTMLDialogElement>('#welcome')!;
+const previewToggle = document.querySelector<HTMLInputElement>('#previewToggle')!;
+const previewTranslation = document.querySelector<HTMLElement>('#previewTranslation')!;
 let activeProvider = 'plan';
 let confirmedAccount = false;
 let accountCheck = 0;
@@ -31,6 +33,7 @@ const confirmFirstLogin = (): void => {
 
 const checkAccount = async (action: 'status' | 'login' | 'logout'): Promise<void> => {
   const request = ++accountCheck;
+  delete accountStatus.dataset.connected;
   login.disabled = true;
   logout.disabled = true;
   showStatus(accountStatus, action === 'login' ? '브라우저에서 ChatGPT 로그인을 완료해 주세요.' : '연결 상태를 확인하는 중…');
@@ -39,10 +42,11 @@ const checkAccount = async (action: 'status' | 'login' | 'logout'): Promise<void
     if (request !== accountCheck) return;
     if (!reply?.ok) throw new Error(reply?.error || 'Mac 연결 프로그램을 확인해 주세요.');
     confirmedAccount = reply.connected === true;
+    accountStatus.dataset.connected = String(confirmedAccount);
     login.hidden = confirmedAccount;
     logout.hidden = !confirmedAccount;
     installHelp.open = false;
-    showStatus(accountStatus, confirmedAccount ? 'ChatGPT 플랜에 연결되었습니다.' : 'ChatGPT 로그인이 필요합니다.');
+    showStatus(accountStatus, confirmedAccount ? '연결됨' : '로그인 필요');
     if (action === 'login') confirmFirstLogin();
   } catch (error: unknown) {
     if (request !== accountCheck) return;
@@ -109,6 +113,9 @@ provider.addEventListener('change', () => {
   displayProvider();
   if (provider.value === 'plan') void checkAccount('status');
   else ++accountCheck;
+});
+previewToggle.addEventListener('change', () => {
+  previewTranslation.hidden = !previewToggle.checked;
 });
 login.addEventListener('click', () => void checkAccount('login'));
 logout.addEventListener('click', () => void checkAccount('logout'));

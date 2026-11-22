@@ -48,3 +48,5 @@ npm test
 ```
 
 [DualRead AI Translator](https://github.com/zkwi/dualread-ai-translator)의 MIT 라이선스 포크입니다. 브라우저 확장은 원본의 문단 배치 로직과 아이콘을 사용합니다. 번들로 포함한 OpenAI Sign in with ChatGPT DevKit에는 별도의 비상업적 라이선스가 적용됩니다. [DualRead 라이선스](./LICENSE) · [DevKit 라이선스](./personal/native/vendor/siwc/LICENSE) · [제3자 고지](./personal/native/vendor/siwc/THIRD_PARTY_NOTICES.md)
+
+설정과 팝업은 Meta의 Astryx Neutral 0.7.17 테마를 사용합니다. 테마 CSS와 Figtree, Instrument Serif 폰트는 확장에 포함됩니다. [Astryx](https://github.com/meta/astryx) · [테마와 폰트 라이선스](./personal/static/theme)

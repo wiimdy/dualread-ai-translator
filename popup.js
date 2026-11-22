@@ -23,7 +23,12 @@ const load = async () => {
         chrome.commands.getAll(),
     ]);
     const shortcutHelp = document.getElementById('shortcut-help');
-    for (const [commandName, id] of [['translate-page', 'all-shortcut'], ['translate-selection', 'selection-shortcut']]) {
+    const shortcuts = [
+        ['translate-page', 'all-shortcut'],
+        ['translate-selection', 'selection-shortcut'],
+        ['pick-paragraph', 'pick-shortcut'],
+    ];
+    for (const [commandName, id] of shortcuts) {
         const shortcut = commands.find((command) => command.name === commandName)?.shortcut || '';
         document.getElementById(id).textContent = shortcut;
         if (!shortcut)

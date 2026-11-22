@@ -1,28 +1,48 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-astryx-theme="neutral">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DualRead 개인용</title>
+    <title>DualRead · 번역</title>
     <link rel="stylesheet" href="ui.css" />
+    <link rel="stylesheet" href="popup.css" />
     <script type="module" src="popup.js"></script>
   </head>
   <body class="popup">
-    <main>
-      <header><h1>DualRead</h1><button id="settings" type="button" class="quiet">설정</button></header>
-      <div class="route">
-        <span class="label">번역할 텍스트의 전송 대상</span>
-        <strong id="destination">설정을 확인하는 중…</strong>
-        <a id="usage" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer" hidden>ChatGPT 사용량 관리</a>
+    <main class="palette">
+      <header class="palette-head">
+        <h1 class="wordmark"><span class="brand-mark" aria-hidden="true"></span>DualRead</h1>
+        <button id="settings" class="settings-button" type="button" aria-label="환경설정 열기" title="환경설정">
+          <span class="sliders" aria-hidden="true"></span>
+        </button>
+      </header>
+      <div class="palette-actions">
+        <button id="all" class="page-action" type="button" disabled>
+          <span class="page-tile" aria-hidden="true"><span class="page-icon"></span></span>
+          <span class="action-copy"><strong>페이지 전체 번역</strong><small>다시 누르면 원문 보기</small></span>
+          <kbd id="all-shortcut"></kbd>
+        </button>
+        <div class="secondary-actions">
+          <button id="selected" class="palette-row" type="button" disabled>
+            <span class="row-icon" aria-hidden="true"><span class="select-icon"></span></span>
+            <span>드래그한 글만 번역</span><kbd id="selection-shortcut"></kbd>
+          </button>
+          <button id="pick" class="palette-row" type="button" disabled>
+            <span class="row-icon" aria-hidden="true"><span class="paragraph-icon">¶</span></span>
+            <span>문단 골라 번역</span><kbd id="pick-shortcut"></kbd>
+          </button>
+          <button id="clear" class="palette-row clear-row" type="button">
+            <span class="row-icon" aria-hidden="true"><span class="eraser-icon"></span></span>
+            <span>번역 지우기</span>
+          </button>
+        </div>
       </div>
-      <div class="actions">
-        <button id="all" class="primary" type="button" disabled>페이지 전체 번역 켜기·끄기 <kbd id="all-shortcut"></kbd></button>
-        <button id="selected" type="button" disabled>드래그한 글만 번역 <kbd id="selection-shortcut"></kbd></button>
-        <button id="pick" type="button" disabled>문단 골라 번역</button>
-        <button id="clear" type="button" class="quiet">번역 지우기</button>
-      </div>
-      <p id="shortcut-help" hidden>표시되지 않은 단축키는 <code>chrome://extensions/shortcuts</code>에서 DualRead에 지정하세요.</p>
+      <p id="shortcut-help" hidden>단축키가 비어 있다면 Chrome의 <code>chrome://extensions/shortcuts</code>에서 지정하세요.</p>
       <p id="status" role="status" aria-live="polite"></p>
+      <footer class="palette-foot">
+        <div class="route-text"><span class="route-caption">번역 전송 대상</span><strong id="destination">확인 중…</strong></div>
+        <a id="usage" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer" aria-label="ChatGPT 사용량 보기" hidden>사용량 <span aria-hidden="true">↗</span></a>
+      </footer>
     </main>
   </body>
 </html>

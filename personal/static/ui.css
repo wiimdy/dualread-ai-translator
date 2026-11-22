@@ -1,61 +1,102 @@
+@import url("theme/astryx-neutral.css");
+
+@font-face {
+  font-family: Figtree;
+  src: url("theme/figtree-400.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Figtree;
+  src: url("theme/figtree-600.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: Figtree;
+  src: url("theme/figtree-700.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("theme/instrument-serif.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light dark;
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
-  --canvas: #f4f7fb;
-  --ink: #10233f;
-  --muted: #4f6079;
-  --line: #b3c2d4;
-  --surface: #fff;
-  --accent: #145ac2;
+  --ui-font: Figtree, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --display-font: "Instrument Serif", Georgia, "AppleMyungjo", serif;
+  --font-family-body: var(--ui-font);
+  --font-family-heading: var(--ui-font);
+  --canvas: #f6f5f2;
+  --surface: #fffefa;
+  --ink: #202127;
+  --muted: #5f606b;
+  --line: #d8d7d6;
+  --accent: #5143a7;
+  --tint: #efedf9;
   --on-accent: #fff;
-  --error: #aa3024;
-  background: var(--canvas);
+  --error: #a22a3e;
+  font-family: var(--ui-font);
   color: var(--ink);
+  background: var(--canvas);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #141d2b; --ink: #e6edf8; --muted: #b2c0d6; --line: #53657f;
-    --surface: #202d40; --accent: #9bc3ff; --on-accent: #112b54; --error: #ffada4;
+    --canvas: #19191e;
+    --surface: #24242b;
+    --ink: #f4f2f0;
+    --muted: #b2afb9;
+    --line: #44424e;
+    --accent: #b5aaff;
+    --tint: #32303f;
+    --on-accent: #222030;
+    --error: #ffa5ad;
+  }
+}
+/* Neutral provides the semantic palette. A small tint gives the reader its paper and ink colors. */
+@supports (color: light-dark(white, black)) {
+  :root {
+    --canvas: color-mix(in srgb, var(--color-background-body) 22%, light-dark(#f8f6f1, #19191f));
+    --surface: color-mix(in srgb, var(--color-background-surface) 55%, light-dark(#fffdf7, #24232d));
+    --ink: color-mix(in srgb, var(--color-text-primary) 15%, light-dark(#24252b, #efedf1));
+    --muted: color-mix(in srgb, var(--color-text-secondary) 25%, light-dark(#686873, #b9b6c3));
+    --error: var(--color-error);
   }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; font-size: 14px; line-height: 1.55; }
-h1, h2 { margin: 0; line-height: 1.35; letter-spacing: -.035em; }
-h1 { font-size: 25px; }
-h2 { font-size: 20px; }
-header, .account-actions { display: flex; align-items: center; gap: 14px; }
-header { justify-content: space-between; }
-a { color: var(--accent); text-underline-offset: .18em; }
-button, input, select { font: inherit; color: inherit; }
-button, input, select, dialog { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-button, input, select { padding: 9px 12px; }
-button, summary { cursor: pointer; }
-button, label { font-weight: 600; }
-button:hover:enabled { border-color: var(--accent); }
-button:disabled { opacity: .58; cursor: wait; }
-:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
-.quiet { border-color: transparent; background: transparent; color: var(--muted); }
-.popup { width: 330px; }
-.popup main { padding: 18px; }
-.popup h1 { font-size: 21px; }
-.route { display: grid; gap: 2px; padding: 8px 0 15px; overflow-wrap: anywhere; }
-.label, small, details { color: var(--muted); }
-.label, small, .route a { font-size: 12px; }
-.actions kbd { font: inherit; font-size: .85em; margin-inline-start: .4em; }
-.actions, .field { display: grid; gap: 7px; }
-.options main { max-width: 490px; margin: clamp(24px, 7vh, 80px) auto; padding: 0 22px; }
-.options header { margin-bottom: 24px; }
-.field { margin: 0 0 18px; }
-.field input, .field select { width: 100%; }
-.account-actions { flex-wrap: wrap; }
-details { margin: 16px 0 0; }
-details p { margin: 8px 0; }
-code { overflow-wrap: anywhere; }
-footer { margin: 24px 0 0; }
-[role="status"] { font-size: 13px; margin: 10px 0; overflow-wrap: anywhere; }
-[role="status"]:empty { display: none; }
+body { margin: 0; font-family: var(--ui-font); color: var(--ink); }
+h1, h2, h3, p, figure { margin: 0; }
+h1, h2, h3, p { color: inherit; }
+button, input, select, summary { font-family: inherit; }
+button, select, summary { cursor: pointer; }
+button:disabled { cursor: wait; opacity: .58; }
+a { color: var(--accent); text-underline-offset: .17em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 [data-error="true"] { color: var(--error); }
-dialog { max-width: min(390px, 90vw); padding: 22px; color: var(--ink); }
-dialog::backdrop { background: rgb(0 0 0 / 40%); }
+[role="status"]:empty { display: none; }
+.wordmark {
+  display: inline-flex; align-items: center; gap: 9px;
+  color: var(--ink); font: 700 25px/1 var(--ui-font); letter-spacing: -.065em;
+}
+.brand-mark {
+  position: relative; display: inline-block; flex: none;
+  width: 29px; height: 30px; border-radius: 8px; background: #5345aa;
+}
+.brand-mark::before, .brand-mark::after {
+  position: absolute; content: ""; top: 8px; height: 15px; width: 8px;
+  border-radius: 1.5px 2px 1px 1px;
+}
+.brand-mark::before { left: 5.5px; transform: skewY(15deg); background: #fffef9; }
+.brand-mark::after { right: 5.5px; transform: skewY(-15deg); background: #d8d1ff; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; }
+}
