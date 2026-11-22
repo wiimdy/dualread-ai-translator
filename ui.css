@@ -1,0 +1,60 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  --canvas: #f4f7fb;
+  --ink: #10233f;
+  --muted: #4f6079;
+  --line: #b3c2d4;
+  --surface: #fff;
+  --accent: #145ac2;
+  --on-accent: #fff;
+  --error: #aa3024;
+  background: var(--canvas);
+  color: var(--ink);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #141d2b; --ink: #e6edf8; --muted: #b2c0d6; --line: #53657f;
+    --surface: #202d40; --accent: #9bc3ff; --on-accent: #112b54; --error: #ffada4;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-size: 14px; line-height: 1.55; }
+h1, h2 { margin: 0; line-height: 1.35; letter-spacing: -.035em; }
+h1 { font-size: 25px; }
+h2 { font-size: 20px; }
+header, .account-actions { display: flex; align-items: center; gap: 14px; }
+header { justify-content: space-between; }
+a { color: var(--accent); text-underline-offset: .18em; }
+button, input, select { font: inherit; color: inherit; }
+button, input, select, dialog { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+button, input, select { padding: 9px 12px; }
+button, summary { cursor: pointer; }
+button, label { font-weight: 600; }
+button:hover:enabled { border-color: var(--accent); }
+button:disabled { opacity: .58; cursor: wait; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+.popup { width: 330px; }
+.popup main { padding: 18px; }
+.popup h1 { font-size: 21px; }
+.route { display: grid; gap: 2px; padding: 8px 0 15px; overflow-wrap: anywhere; }
+.label, small, details { color: var(--muted); }
+.label, small, .route a { font-size: 12px; }
+.actions, .field { display: grid; gap: 7px; }
+.options main { max-width: 490px; margin: clamp(24px, 7vh, 80px) auto; padding: 0 22px; }
+.options header { margin-bottom: 24px; }
+.field { margin: 0 0 18px; }
+.field input, .field select { width: 100%; }
+.account-actions { flex-wrap: wrap; }
+details { margin: 16px 0 0; }
+details p { margin: 8px 0; }
+code { overflow-wrap: anywhere; }
+footer { margin: 24px 0 0; }
+[role="status"] { font-size: 13px; margin: 10px 0; overflow-wrap: anywhere; }
+[role="status"]:empty { display: none; }
+[data-error="true"] { color: var(--error); }
+dialog { max-width: min(390px, 90vw); padding: 22px; color: var(--ink); }
+dialog::backdrop { background: rgb(0 0 0 / 40%); }

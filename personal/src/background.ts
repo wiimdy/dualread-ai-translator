@@ -1,0 +1,66 @@
+import { isRecord, nativeRequest, readRoute, saveRoute, translate } from './routing.js';
+
+const isOwnView = (sender: chrome.runtime.MessageSender, page: string): boolean =>
+  sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL(page);
+
+const dispatch = async (msg: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<object> => {
+  const options = isOwnView(sender, 'options.html');
+  if (msg.type === 'personal-state' && (options || isOwnView(sender, 'popup.html'))) return { ok: true, ...await readRoute() };
+  if (msg.type === 'personal-save' && options) {
+    await saveRoute(msg);
+    return { ok: true };
+  }
+  if (msg.type === 'personal-account' && options &&
+      (msg.action === 'login' || msg.action === 'logout' || msg.action === 'status')) {
+    const reply = await nativeRequest({ action: msg.action });
+    if (msg.action !== 'status') {
+      await navigator.locks.request('personal-settings', async () => {
+        const route = await readRoute();
+        if (route.provider === 'plan') await chrome.storage.local.set({ route: { ...route, routeVersion: crypto.randomUUID() } });
+      });
+    }
+    return { ok: true, connected: reply.connected === true };
+  }
+  if (msg.type === 'personal-translate' && sender.id === chrome.runtime.id &&
+      sender.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//i.test(sender.url ?? '')) {
+    return { ok: true, translation: await translate(msg.text, msg.routeVersion) };
+  }
+  throw new Error('허용되지 않은 요청입니다.');
+};
+
+chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
+  if (!isRecord(message) || typeof message.type !== 'string' || !message.type.startsWith('personal-')) return;
+  void dispatch(message, sender).then(respond, (error: unknown) =>
+    respond({ ok: false, error: error instanceof Error ? error.message : '요청을 처리할 수 없습니다.' }));
+  return true;
+});
+
+const launch = async (tabId: number, type: 'personal-pick' | 'personal-selected'): Promise<void> => {
+  try {
+    const { routeVersion } = await readRoute();
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['shared.js', 'page.js'] });
+    const result = await chrome.tabs.sendMessage(tabId, { type, routeVersion });
+    if (!result?.ok) throw new Error(result?.error || '문단을 선택해 주세요.');
+    await chrome.action.setBadgeText({ tabId, text: '' });
+    await chrome.action.setTitle({ tabId, title: 'DualRead 개인 번역기' });
+  } catch (error: unknown) {
+    await chrome.action.setBadgeText({ tabId, text: '!' });
+    await chrome.action.setTitle({ tabId, title: error instanceof Error ? error.message : '일반 웹페이지에서 시도하세요.' });
+  }
+};
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: 'pick', title: 'DualRead · 번역할 문단 고르기', contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'selected', title: 'DualRead · 선택한 글 번역', contexts: ['selection'] });
+  });
+});
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (tab?.id === undefined || (info.frameId ?? 0) !== 0) return;
+  if (info.menuItemId === 'pick' || info.menuItemId === 'selected') {
+    void launch(tab.id, info.menuItemId === 'pick' ? 'personal-pick' : 'personal-selected');
+  }
+});
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === 'pick-paragraph' && tab?.id !== undefined) void launch(tab.id, 'personal-pick');
+});

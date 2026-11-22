@@ -1,188 +1,40 @@
-# DualRead AI Translator - AI Bilingual Webpage Translation Chrome Extension
+# DualRead 개인 번역기
 
-[简体中文](README.zh-CN.md)
+읽고 있는 웹페이지에서 고른 문단을 한국어로 번역해 원문 바로 아래에 표시합니다. 기본 연결은 **ChatGPT로 로그인**입니다. OpenAI가 해당 계정에 허용한 모델을 사용하며 번역 요청에 구독 사용량이 적용됩니다. 원하는 경우 설정에서 OpenAI 호환 서버를 직접 지정할 수 있습니다.
 
-DualRead AI Translator is an open-source Chrome extension for AI bilingual webpage translation. It keeps the original webpage text visible and inserts AI translations nearby, making it easier to read foreign-language news, social posts, Q&A pages, documentation, and long articles without losing source context.
+## 이 Mac에서 시작하기
 
-It is designed as a lightweight OpenAI-compatible web translator: bring your own API key, choose a model, translate only the current reading area, and keep token cost under control.
+1. Chrome에서 `chrome://extensions`를 열고 **개발자 모드 → 압축해제된 확장 프로그램을 로드**를 선택합니다. 이 Mac에서는 빌드된 `personal/dist` 폴더를 고릅니다. ZIP을 받았다면 압축을 풀고 `manifest.json`이 들어 있는 폴더를 고릅니다. GitHub에서 새로 내려받았다면 저장소 최상위 폴더를 사용할 수 있습니다. 설치 후에도 해당 폴더를 유지하세요.
+2. ChatGPT 연결 프로그램을 처음 설치하는 Mac에서는 아래 명령을 저장소 최상위 폴더에서 실행합니다. Node.js 22 이상, npm, macOS의 Swift 도구가 필요합니다. Chrome은 고정된 확장 ID를 통해 이 프로그램을 실행합니다.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4.svg)
-![OpenAI Compatible](https://img.shields.io/badge/API-OpenAI--compatible-111827.svg)
+   ```sh
+   npm ci
+   npm run build -w dualread-personal-native
+   node personal/native/install.mjs
+   ```
+3. 확장 메뉴에서 **DualRead → 설정 → ChatGPT로 계속하기**를 누르고 사용할 계정과 워크스페이스를 선택한 뒤 플랜 사용을 승인합니다. 현재 브라우저에서 ChatGPT에 로그인한 상태여도 이 확장에 대한 동의는 별도로 진행합니다. 플랜 지원 여부와 한도는 계정에 따라 다릅니다. [OpenAI 공식 연결 안내](https://developers.openai.com/siwc/token-sharing-open-source) · [사용량 관리](https://chatgpt.com/settings/usage)
+4. 일반 웹페이지에서 **문단 골라 번역**을 누른 후 원하는 문단을 한 번 클릭합니다. 단축키는 `Alt+Shift+T`(Mac은 `Option+Shift+T`)이고, 고르는 중 `Esc`를 누르면 취소됩니다. 문단의 일부만 보내려면 글을 드래그하고 우클릭 메뉴에서 **DualRead · 선택한 글 번역**을 고릅니다. **번역 지우기**로 페이지에 표시한 결과를 제거합니다.
 
-## Preview
+## 원문이 가는 곳
 
-![Bilingual translation preview](docs/images/bilingual-demo.png)
+| 설정 | 선택한 글의 경로 |
+| --- | --- |
+| 내 ChatGPT 구독 | 확장 → 이 Mac의 Chrome 연결 프로그램 → OpenAI Responses API. 본인이 승인한 구독으로 요청합니다. |
+| 사용자 지정 서버 | 확장 → 지정한 OpenAI 호환 서버. 서버 주소와 모델 ID는 사용할 때 입력합니다. 키가 필요 없는 로컬 서버도 지원합니다. |
 
-![Popup control panel](docs/images/popup-demo.png)
+원문에는 클릭한 문단 또는 명시적으로 선택한 부분이 들어갑니다. 페이지를 열거나 스크롤하는 것만으로 번역 요청이 발생하지 않습니다. 선택 영역이 여러 문단에 걸치면 문단별로 보냅니다. 각 요청은 5,000자 이내이고, 한 번에 최대 12개 문단을 선택할 수 있습니다. 웹페이지 주소·제목·쿠키를 번역 요청에 추가하지 않습니다. 원문에 직접 포함된 URL은 번역할 글의 일부입니다. [데이터 처리 방식](./PRIVACY.md)
 
-## Why DualRead AI Translator
+## 개발
 
-- **Bilingual webpage translation**: original text stays in place, translation appears underneath.
-- **Chrome AI translator workflow**: translate with OpenAI, DeepSeek, DashScope/Qwen, local models, or any OpenAI-compatible API.
-- **Viewport-first translation**: translate the current screen and nearby content instead of sending the whole page.
-- **Dynamic page support**: keep one translation record across scrolling feeds, expanded posts, source edits, and React-style re-renders without duplicate requests.
-- **Structure-aware layout**: place translations safely in blocks, table cells, lists, Flex/Grid rows, clipped previews, and Web Component layouts without rewriting host layout styles.
-- **Responsive reading styles**: adapt spacing for compact cards, mobile screens, and long articles while respecting RTL and vertical writing modes.
-- **Auto translate with language skip**: translate foreign-language pages automatically and skip pages already dominated by the target language.
-- **Right-click translation**: translate the current webpage or selected text from the context menu.
-- **AI study mode**: open an English page as a clean lesson for your level (CET-4, CET-6, B2, or C1), with soft vocabulary highlights and short in-line glosses, underlined key sentences, and paragraph translations available through each paragraph's **Tr** button, plus a word list and brief grammar, long-sentence, and outline notes.
-- **Responsive and cost-aware**: plain-text streaming per paragraph, small concurrency, per-page budgets, and local paragraph cache.
-- **Privacy-conscious**: no project server, no analytics, no bundled developer API key.
+확장용 TypeScript는 `personal/src`, 화면과 매니페스트는 `personal/static`, Mac 연결 프로그램은 `personal/native`에 있습니다. 빌드하면 `personal/dist`와 저장소 최상위의 확장 실행 파일을 갱신합니다. 브라우저 테스트는 임시 프로필과 로컬 테스트 서버를 사용합니다.
 
-## Use Cases
-
-DualRead works best for:
-
-- Reading English news websites with Simplified Chinese translations.
-- Translating X/Twitter posts, Reddit threads, Quora answers, and forum pages.
-- Reading documentation, GitHub README files, Wikipedia articles, and technical blogs.
-- Comparing the original paragraph with the translated paragraph while learning a language.
-
-Default direction: English -> Simplified Chinese. The extension UI supports Simplified Chinese, Traditional Chinese, English, and Japanese.
-
-## Install
-
-1. Open `chrome://extensions/`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the `dualread-ai-translator` folder.
-5. After changing code, refresh the extension card and reload the target webpage.
-
-To update a Git checkout, run `git pull --ff-only` in the repository, reload the DualRead card at `chrome://extensions/`, and refresh the original webpage. No build or reinstall is needed; reloading preserves your API settings. If an existing lesson loses its connection, reopen study mode from the original page.
-
-## Setup
-
-Open the extension popup, click **Open settings**, then configure:
-
-```text
-Provider: OpenAI / DeepSeek / DashScope / Local compatible service / Custom
-API Key: your own provider key
-Model: for example gpt-4o-mini or deepseek-v4-flash
-API URL: an OpenAI-compatible Chat Completions endpoint
-```
-
-Common API URLs:
-
-```text
-OpenAI    https://api.openai.com/v1/chat/completions
-DeepSeek  https://api.deepseek.com/chat/completions
-DashScope https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-Local     http://localhost:8000/v1/chat/completions
-```
-
-Settings are saved automatically. The project does not include or require any developer-owned API key.
-
-The settings page keeps provider, model, API Key, custom endpoint, Thinking controls, and API testing together in **API connection**. The custom endpoint field appears only for the Custom provider. Interface language, prompt, concurrency, and maintenance actions live in the collapsed **Advanced settings** section.
-
-The interface follows the browser language by default and can be changed in Advanced settings, while translation languages remain independent. You can translate English to Simplified Chinese, Japanese to Traditional Chinese, or any other provider-supported direction.
-
-Strongly recommended: keep **disable controllable thinking** enabled in **API connection**. Thinking/reasoning mode can make translation much slower. **Auto select** does not hard-code providers from the URL or model name. Clicking **Test API** probes the supported control shape and saves the result. Changing the API URL or model requires another test; no extra Thinking field is sent before that test succeeds.
-
-### OpenCode / Bifrost
-
-Select Custom and enter your gateway's Chat Completions endpoint, gateway key, and model (for example, `workbuddy-opencode-go/deepseek-v4-flash`). Direct OpenCode connections use the official endpoint and an unprefixed model name.
-
-The `opencode.ai` host and model routes whose provider prefix ends in `opencode` or `opencode-go` automatically receive `x-opencode-session`. Paragraphs, scrolling, and reconnections share the current page translation session. Restarting translation or opening another page creates a new session. Each API test has its own session, reused across parameter probes and retries. Legacy batch messages receive one session per batch task.
-
-For DeepSeek Flash, keep **disable controllable thinking** enabled and select `thinking.type: disabled`, then test the API. Unchecking the control or omitting the parameter does not actively disable thinking. Reload the extension and target pages after updating the code.
-
-## Usage
-
-- **Start translation**: translate visible and nearby readable content.
-- **Translate current screen**: limit scanning to the current viewport area.
-- **Hide / Show translations**: temporarily switch between translated view and original view.
-- **Clear translations**: remove inserted translations from the current page.
-- **Right-click page**: translate the current page.
-- **Right-click selected text**: translate only the selected text.
-- **AI study mode**: click **AI study mode** in the popup, or right-click and choose **Read in AI study mode**.
-
-Page translation first checks the page language. Pages already in the target language are skipped; otherwise DualRead translates readable visible and nearby blocks, including short headings and labels. Selected-text translation remains available for small mixed-language snippets.
-
-### AI study mode
-
-Study mode sends the page text to your configured model once and opens the result in a new tab. The AI extracts the article from the page, copies it word for word, and writes the study notes; DualRead then marks the listed key words (bold with a soft amber highlight, a short gloss right after the word, click for details) and key sentences (a fine underline) in the article. Translations stay hidden until you click the **Tr** button at the end of a paragraph; only that button shows or hides its translation. Below the article you get the key words and phrases, short grammar, long-sentence, and outline notes, and a full translation that is collapsed until you open it.
-
-- Choose CET-4, CET-6, B2, or C1 at the top of the reader. Each level is generated once per page and cached locally; switching back is instant, and **Regenerate** asks the AI again.
-- Select a passage first to study only that part. From the context menu a sentence or two is enough; the popup button needs about 80 characters, so a word left selected earlier is ignored. Otherwise DualRead reads the page's main article area, or the whole page when there is none.
-- The lesson prints cleanly (or saves as PDF) without the toolbar, keeping the highlights.
-- Long pages are cut to about 12,000 characters, and the reader says when only the first part was covered. Study mode currently supports English content only.
-- It uses the same API connection as translation. With DeepSeek Flash in non-thinking mode, a 900-word news article takes about 30 seconds and roughly 5,000 output tokens; the article appears within a second or two and the notes stream in after it. Keep thinking disabled (Test API in settings), or generation becomes much slower.
-- The notes are AI-generated and can contain mistakes, especially grammar labels. Check important points against a dictionary.
-
-## FAQ
-
-### Does DualRead translate the whole page?
-
-Not by default. DualRead focuses on the current viewport and nearby content to reduce API requests and token cost.
-
-### Which AI providers are supported?
-
-Any OpenAI-compatible Chat Completions API can work. Built-in presets cover OpenAI, DeepSeek, DashScope/Qwen, local compatible services, and custom endpoints.
-
-### Can DualRead disable model thinking mode?
-
-Yes, and it is strongly recommended for translation speed. Keep **Strongly recommended: disable controllable thinking** enabled, choose **Auto select**, and click **Test API**. DualRead tries the next control shape only when the endpoint explicitly rejects a Thinking field; authentication, rate-limit, model, network, and timeout errors stop immediately. A manual strategy remains available in advanced settings.
-
-### Where is my API key stored?
-
-The API key is stored locally in Chrome extension storage. It is not sent to any project-owned server.
-
-### Can I use a different UI language from the translation target?
-
-Yes. The interface follows the browser language by default, can be changed in Advanced settings, and remains independent from source and target languages. The extension UI includes Simplified Chinese, Traditional Chinese, English, and Japanese localization.
-
-## Privacy
-
-- API Key, settings, and translation cache are stored locally in Chrome extension storage.
-- Webpage text is sent only to the API endpoint configured by the user.
-- Study mode sends the selected text or the page's main text (up to about 12,000 characters), the page title, and the site name when you open it. The captured text stays in session storage and is cleared when the browser closes; finished lessons are cached locally (up to 20).
-- The extension does not run a project-owned server and does not include analytics.
-- Do not paste real API keys into issues, screenshots, or public bug reports.
-
-See [PRIVACY.md](PRIVACY.md) for details.
-
-## Development
-
-```bash
-npm install
-npm run check
+```sh
+npm ci
+npm run build
+npm run typecheck
+npm run lint
+npm exec -w dualread-personal -- playwright-core install chromium
 npm test
-npm run test:layout
-npm run test:samples
-npm run test:all
 ```
 
-Useful scripts:
-
-```bash
-npm run audit:public        # scan for keys, local paths, version drift, and locale problems
-```
-
-UI strings live in `_locales/{zh_CN,zh_TW,en,ja}/messages.json` and are edited by hand. `npm run test:shared` fails when a key is missing from any locale, and `npm run audit:public` rejects unused keys, untranslated fallbacks, mismatched `$1` substitutions, and simplified characters left in the Traditional Chinese file.
-
-GitHub Actions runs the publication audit, unit tests, browser fixtures, the layout matrix, and the extension smoke test on every push and pull request. Real-site samples (`npm run test:samples`) stay local because they depend on live pages.
-
-Start with the [documentation index](docs/README.md). Development notes are in [docs/development.md](docs/development.md), and manual sample pages are listed in [test-pages.md](test-pages.md).
-
-## Open Source Hygiene
-
-Before sharing or publishing:
-
-1. Run `npm run check`.
-2. Confirm screenshots do not show API keys, accounts, or private pages.
-3. Confirm `.env`, `.npmrc`, archives, CRX files, and private keys are not committed.
-4. If publishing the Git history, check commit author name/email first.
-
-## Keywords
-
-Chrome extension, AI translator, bilingual webpage translation, webpage translator, OpenAI-compatible translator, DeepSeek translator, Qwen translator, browser extension translation, English to Chinese translator.
-
-## Links
-
-- [Simplified Chinese README](README.zh-CN.md)
-- [Privacy](PRIVACY.md)
-- [Security](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
-- [License](LICENSE)
+[DualRead AI Translator](https://github.com/zkwi/dualread-ai-translator)의 MIT 라이선스 포크입니다. 브라우저 확장은 원본의 문단 배치 로직과 아이콘을 사용합니다. 번들로 포함한 OpenAI Sign in with ChatGPT DevKit에는 별도의 비상업적 라이선스가 적용됩니다. [DualRead 라이선스](./LICENSE) · [DevKit 라이선스](./personal/native/vendor/siwc/LICENSE) · [제3자 고지](./personal/native/vendor/siwc/THIRD_PARTY_NOTICES.md)

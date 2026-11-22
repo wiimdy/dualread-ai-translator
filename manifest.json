@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "__MSG_extensionName__",
-  "short_name": "__MSG_extensionShortName__",
-  "version": "0.13.1",
-  "default_locale": "en",
-  "description": "__MSG_extensionDescription__",
+  "name": "DualRead 개인 번역기",
+  "description": "직접 고른 문단을 ChatGPT 구독 또는 지정한 서버로 번역하고 원문 아래에 표시합니다.",
+  "version": "0.13.2",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl3KaYueQmqNRFFfAH+z/Om31xiYj0TqEIha0bwqPShBXF223RHalyyEvh1gJRVJa091VodaZhYyWXyO6vjEysrSHbXxdUKM325D9aFAOAox0xMKDKoa67/EVXwp2Equ6FJ6f3M7LN+6S7mlST7Hju+VtW6kGhJIlVAF8qUNPSCjjMrr7/x1NYqRMZLVL9MyK5qRBAlP63AkmhFwIddPZRGhabsKnt4sodaTordK3TArP46L+pMQh7f1lW9dOoy+QwM/BG/dOWTm1bSrRyq3ErPTjXicAqUiTv4EbsRfX4wuPBXD5W5R1PW7pPlYxdxyWWhKNYqQX9XNiCiLJmGvbuwIDAQAB",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -13,58 +13,38 @@
   },
   "permissions": [
     "activeTab",
-    "contextMenus",
     "scripting",
-    "storage"
+    "storage",
+    "nativeMessaging",
+    "contextMenus"
   ],
-  "host_permissions": [
-    "<all_urls>"
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "http://*/*",
-        "https://*/*"
-      ],
-      "js": [
-        "shared.js",
-        "content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "_locales/*/messages.json"
-      ],
-      "matches": [
-        "http://*/*",
-        "https://*/*"
-      ]
-    }
-  ],
   "action": {
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    },
     "default_popup": "popup.html",
-    "default_title": "__MSG_extensionShortName__"
+    "default_title": "DualRead 개인 번역기"
   },
-  "options_page": "options.html",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "commands": {
-    "toggle_translation": {
+    "pick-paragraph": {
       "suggested_key": {
-        "default": "Alt+T",
-        "mac": "Alt+T"
+        "default": "Alt+Shift+T"
       },
-      "description": "__MSG_commandToggleTranslation__"
+      "description": "번역할 문단 직접 고르기"
     }
-  }
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src https: http://127.0.0.1:* http://localhost:*; base-uri 'none'; frame-src 'none'; form-action 'none'"
+  },
+  "default_locale": "en"
 }

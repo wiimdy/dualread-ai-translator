@@ -1,31 +1,11 @@
-# Privacy
+# DualRead 개인 번역기의 데이터 처리
 
-DualRead AI does not run a project-owned server, does not include analytics, and does not bundle any developer-owned API key.
+이 버전에서 번역은 사용자가 문단을 클릭하거나 선택한 글의 번역을 실행할 때 시작합니다. 확장은 폼과 편집 영역을 건너뛰고, 본문에서 골라낸 텍스트만 번역 입력으로 사용합니다. 여러 문단을 선택하면 각각 독립된 요청을 보냅니다. 번역문은 현재 탭의 원문 아래에 표시되며 새로고침하거나 지울 때까지 그 페이지에 있습니다.
 
-## What Stays Local
+**ChatGPT 구독**을 사용하면 Chrome이 이 Mac에 등록된 연결 프로그램과 통신합니다. 이 프로그램이 OpenAI의 공식 로그인 절차를 처리하고, 선택한 글·번역 지시문·모델 ID를 OpenAI로 전송합니다. 모델 조회나 토큰 갱신에는 계정과 연결된 OpenAI 서비스가 사용됩니다. 요청은 한 번의 번역 단위로 만들며 도구나 대화 기록을 첨부하지 않습니다. 모델 선택 목록과 실제 권한은 계정·워크스페이스에 따라 달라질 수 있습니다. [공식 개발자 안내](https://developers.openai.com/siwc/token-sharing-open-source)
 
-- API Key and settings are stored in `chrome.storage.local`.
-- Translation cache is stored in `chrome.storage.local`.
-- Study mode lessons are cached in `chrome.storage.local` (up to 20). The page text captured for study mode is kept in `chrome.storage.session` and is cleared when the browser closes.
-- Popup/options state stays in the browser extension.
+계정 정보는 이 Mac의 사용자별 앱 폴더에 보관합니다. OAuth 자격 증명은 macOS 키체인에 보관한 키로 암호화합니다. 확장은 사용자의 Codex 인증 파일이나 ChatGPT 쿠키를 사용하지 않습니다. OpenAI가 수신한 데이터의 처리는 해당 계정의 정책과 설정을 따릅니다.
 
-## What May Be Sent Out
+**사용자 지정 서버**를 선택하면 확장은 지정한 주소로 직접 HTTPS 요청을 보냅니다. 이 기기에서 실행하는 서버에는 HTTP도 허용합니다. 사용자 지정 API 키는 브라우저 세션 메모리에만 보관하고 정확히 같은 서버 주소에서만 재사용합니다. 쿠키와 웹페이지 참조 URL을 첨부하지 않으며 서버가 다른 주소로 리다이렉트하면 중단합니다.
 
-When translation is triggered, selected webpage text is sent to the API endpoint configured by the user in the options page. The endpoint can be OpenAI, DeepSeek, DashScope, a local service, or another OpenAI-compatible service.
-
-The extension sends only the text blocks it decides to translate, plus the model, language settings, and translation prompt needed for the request. It does not intentionally send cookies, browsing history, or page screenshots.
-
-When you open AI study mode, the selected text, or the main text of the page when nothing is selected (up to about 12,000 characters), is sent once per English level together with the page title and site name. The full page URL is not sent.
-
-Provider behavior is controlled by the provider selected by the user. Review that provider's privacy policy if webpage text is sensitive.
-
-## User Controls
-
-- Disable auto translation in the popup or options page.
-- Hide or clear inserted translations from the popup.
-- Clear local translation cache from the options page. This also removes cached study mode lessons.
-- Use a local OpenAI-compatible endpoint if webpage text should not be sent to a cloud provider.
-
-## Security Notes
-
-Do not paste real API keys into issues, screenshots, or public bug reports. If a key is exposed, revoke it from the provider dashboard.
+확장과 네이티브 프로그램은 번역 이력이나 사용 분석을 운영 서버로 전송하지 않습니다. 로컬 모델로 기기 내 번역을 할 때는 연결한 서버도 로컬에서 추론하도록 설정하세요.

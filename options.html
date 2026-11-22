@@ -1,225 +1,66 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title data-i18n="optionsTitle">DualRead AI 设置</title>
-  <link rel="stylesheet" href="options.css">
-</head>
-<body>
-  <main>
-    <header class="page-header">
-      <img src="icons/icon48.png" alt="" width="44" height="44">
-      <div>
-        <h1>DualRead AI</h1>
-        <p data-i18n="optionsSubtitle">网页对照翻译设置。修改后会自动保存。</p>
-      </div>
-      <span id="saveState" class="save-state" data-i18n="optionsAutoSave">自动保存</span>
-    </header>
-
-    <section class="section setup-section">
-      <div class="section-head">
-        <div>
-          <h2 data-i18n="optionsConnection">API 连接</h2>
-          <p data-i18n="optionsConnectionDesc">选择服务商，填写 API Key，然后测试连接。</p>
-        </div>
-        <span>API</span>
-      </div>
-
-      <div id="setupStatus" class="setup-status is-incomplete" role="status" aria-live="polite">
-        <strong data-i18n="optionsSetupLoadingTitle">正在读取配置</strong>
-        <span data-i18n="optionsSetupLoadingText">设置会自动保存。</span>
-      </div>
-
-      <div class="grid">
-        <label>
-          <span data-i18n="optionsProvider">服务商</span>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>번역 연결 설정 · DualRead</title>
+    <link rel="stylesheet" href="ui.css" />
+    <script type="module" src="options.js"></script>
+  </head>
+  <body class="options">
+    <main>
+      <header><h1>번역 연결 설정</h1></header>
+      <form id="config" autocomplete="off">
+        <div class="field">
+          <label for="provider">번역할 텍스트를 보낼 곳</label>
           <select id="provider">
-            <option value="openai">OpenAI</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="dashscope">DashScope / Qwen</option>
-            <option value="local" data-i18n="providerLocal">本地兼容服务</option>
-            <option value="custom" data-i18n="providerCustom">自定义</option>
+            <option value="plan">OpenAI · 내 ChatGPT 구독</option>
+            <option value="custom">사용자 지정 서버</option>
           </select>
-          <small id="providerHint" class="field-help" data-i18n="providerHintOpenaiShort">使用 OpenAI 官方 Chat Completions 接口。</small>
-        </label>
-
-        <label>
-          <span data-i18n="optionsModelName">模型名称</span>
-          <input id="model" placeholder="gpt-4o-mini">
-          <small class="field-help" data-i18n="optionsModelHelp">选择服务商后会自动填入推荐模型，也可以手动修改。</small>
-        </label>
-      </div>
-
-      <div id="customEndpointFields" class="custom-endpoint-fields" hidden>
-        <label>
-          <span data-i18n="optionsApiUrl">Chat Completions API 地址</span>
-          <input id="apiUrl" placeholder="https://api.openai.com/v1/chat/completions">
-          <small class="field-help" data-i18n="optionsApiUrlHelp">选择自定义服务商时需要填写；内置服务商会自动配置。</small>
-        </label>
-      </div>
-
-      <label>
-        API Key
-        <span class="secret-row">
-          <input id="apiKey" type="password" placeholder="sk-...">
-          <button id="toggleApiKey" type="button" class="inline-button" aria-pressed="false" title="显示 API Key" data-i18n="show" data-i18n-title="showApiKey">显示</button>
-        </span>
-        <small class="field-help" data-i18n="optionsApiKeyHelp">只保存在本机 Chrome 扩展存储中，不会上传到本项目服务器。</small>
-      </label>
-
-      <div class="thinking-settings">
-        <label class="checkbox compact-checkbox">
-          <input id="disableThinking" type="checkbox">
-          <span data-i18n="optionsDisableThinking">推荐开启：自动关闭可控思考模式</span>
-        </label>
-
-        <label>
-          <span data-i18n="optionsThinkingStrategy">关闭思考方式</span>
-          <select id="thinkingStrategy">
-            <option value="auto" data-i18n="thinkingStrategyAuto">测试 API 时自动探测</option>
-            <option value="dashscope_enable_thinking" data-i18n="thinkingStrategyDashscope">enable_thinking: false</option>
-            <option value="thinking_disabled" data-i18n="thinkingStrategyDisabledObject">thinking.type: disabled</option>
-            <option value="openrouter_reasoning_low" data-i18n="thinkingStrategyOpenRouterLow">OpenRouter reasoning_effort: low</option>
-            <option value="openrouter_reasoning_minimal" data-i18n="thinkingStrategyOpenRouterMinimal">OpenRouter reasoning minimal</option>
-            <option value="qwen_chat_template_kwargs" data-i18n="thinkingStrategyQwenTemplate">Qwen chat_template_kwargs</option>
-            <option value="omit" data-i18n="thinkingStrategyOmit">不发送思考参数</option>
-          </select>
-          <small id="thinkingHint" class="field-help" data-i18n="thinkingHintAuto">测试 API 时会自动探测可用的关闭思考参数。</small>
-        </label>
-      </div>
-
-      <div class="actions">
-        <p id="message" role="status" aria-live="polite" data-i18n="optionsAutoSaveMessage">设置会自动保存。</p>
-        <button id="test" type="button" data-i18n="optionsTestApi">测试 API</button>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <h2 data-i18n="optionsTranslationLanguages">翻译语言</h2>
-          <p data-i18n="optionsLanguageDesc">默认英译中；如果页面已是目标语言，会自动跳过。</p>
         </div>
-        <span>Language</span>
-      </div>
-
-      <div class="grid">
-        <label>
-          <span data-i18n="optionsSourceLanguage">源语言</span>
-          <select id="sourceLanguage">
-            <option value="English" data-i18n="langEnglish">英语</option>
-            <option value="Auto detect" data-i18n="langAutoDetect">自动检测</option>
-            <option value="简体中文" data-i18n="langSimplifiedChinese">简体中文</option>
-            <option value="繁體中文" data-i18n="langTraditionalChinese">繁體中文</option>
-            <option value="Japanese" data-i18n="langJapanese">日语</option>
-            <option value="Korean" data-i18n="langKorean">韩语</option>
-            <option value="Spanish" data-i18n="langSpanish">西班牙语</option>
-            <option value="French" data-i18n="langFrench">法语</option>
-            <option value="German" data-i18n="langGerman">德语</option>
-          </select>
-          <small class="field-help" data-i18n="optionsSourceLanguageHelp">不确定页面语言时，选择“自动检测”。</small>
-        </label>
-
-        <label>
-          <span data-i18n="optionsTargetLanguage">目标语言</span>
-          <select id="targetLanguage">
-            <option value="简体中文" data-i18n="langSimplifiedChinese">简体中文</option>
-            <option value="繁體中文" data-i18n="langTraditionalChinese">繁體中文</option>
-            <option value="English" data-i18n="langEnglish">英语</option>
-            <option value="Japanese" data-i18n="langJapanese">日语</option>
-            <option value="Korean" data-i18n="langKorean">韩语</option>
-            <option value="Spanish" data-i18n="langSpanish">西班牙语</option>
-            <option value="French" data-i18n="langFrench">法语</option>
-            <option value="German" data-i18n="langGerman">德语</option>
-          </select>
-          <small class="field-help" data-i18n="optionsTargetLanguageHelp">翻译结果会显示在原文下方。</small>
-        </label>
-      </div>
-
-      <p id="languageStatus" class="hint-box" data-i18n="optionsLanguageStatusInitial">当前方向：英语 -> 简体中文。</p>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <h2 data-i18n="optionsReadingExperience">使用体验</h2>
-          <p data-i18n="optionsReadingExperienceDesc">控制是否自动翻译，以及原文和译文的显示方式。</p>
+        <section id="plan" aria-label="ChatGPT 연결">
+          <p>선택한 글을 이 Mac의 연결 프로그램을 통해 OpenAI에 보냅니다. 번역에는 ChatGPT 플랜 사용량이 적용됩니다.</p>
+          <p id="accountStatus" role="status" aria-live="polite"></p>
+          <div class="account-actions">
+            <button id="login" type="button" disabled>ChatGPT로 계속하기</button>
+            <button id="logout" type="button" hidden>로그아웃</button>
+            <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">ChatGPT 사용량 관리</a>
+          </div>
+          <details id="installHelp">
+            <summary>Mac 연결 프로그램 설치 방법</summary>
+            <p>다운로드한 저장소의 최상위 폴더에서 아래 명령을 실행하세요.</p>
+            <pre><code>npm ci
+npm run build -w dualread-personal-native
+node personal/native/install.mjs</code></pre>
+            <p>Edge를 사용한다면 명령 끝에 <code>edge</code>를 붙이세요. 설치 후 이 설정 페이지를 다시 열어 로그인하세요.</p>
+          </details>
+        </section>
+        <div id="custom" hidden>
+          <div class="field">
+            <label for="endpoint">API 기본 주소</label>
+            <input id="endpoint" type="url" spellcheck="false" placeholder="http://127.0.0.1:11434/v1" aria-describedby="endpointHint" />
+            <small id="endpointHint">OpenAI Chat Completions 호환 주소를 입력하세요.</small>
+          </div>
+          <div class="field">
+            <label for="model">모델 ID</label>
+            <input id="model" type="text" spellcheck="false" placeholder="서버에 등록된 모델 ID" />
+          </div>
+          <div class="field">
+            <label for="apiKey">API 키 (선택)</label>
+            <input id="apiKey" type="password" autocomplete="new-password" spellcheck="false" aria-describedby="keyHint" />
+            <small id="keyHint">키는 현재 브라우저 세션에만 보관합니다.</small>
+          </div>
         </div>
-        <span>Reading</span>
-      </div>
-
-      <label class="checkbox choice">
-        <input id="autoTranslate" type="checkbox">
-        <span>
-          <span data-i18n="optionsAutoTranslateLabel">访问外文网页时自动开始翻译</span>
-          <small data-i18n="optionsAutoTranslateHelp">会先检查页面语言，目标语言页面不会重复翻译。</small>
-        </span>
-      </label>
-
-      <label>
-        <span data-i18n="displayModeLabel">展示方式</span>
-        <select id="displayMode">
-          <option value="bilingual" data-i18n="displayModeBilingual">对照：原文下方显示译文</option>
-          <option value="translation-first" data-i18n="displayModeTranslationFirst">译文优先：原文降低透明度</option>
-        </select>
-        <small class="field-help" data-i18n="displayModeHelp">译文优先不会隐藏原文，只会弱化已翻译的原文块，避免破坏网页布局。</small>
-      </label>
-    </section>
-
-    <details id="advancedSettings" class="section advanced-section">
-      <summary>
-        <span>
-          <strong data-i18n="optionsAdvancedSettings">高级设置</strong>
-          <small data-i18n="optionsAdvancedSettingsDescMinimal">界面、提示词、并发和维护</small>
-        </span>
-      </summary>
-
-      <div class="section-head compact">
-        <h2 data-i18n="optionsUiLanguage">界面语言</h2>
-        <span>Interface</span>
-      </div>
-      <label>
-        <select id="uiLanguage">
-          <option value="auto" data-i18n="uiLanguageAuto">跟随浏览器</option>
-          <option value="zh_CN" data-i18n="uiLanguageZhCn">简体中文</option>
-          <option value="zh_TW" data-i18n="uiLanguageZhTw">繁體中文</option>
-          <option value="en" data-i18n="uiLanguageEn">English</option>
-          <option value="ja" data-i18n="uiLanguageJa">日本語</option>
-        </select>
-        <small class="field-help" data-i18n="optionsUiLanguageHelp">只影响插件界面和提示，不影响翻译源语言或目标语言。</small>
-      </label>
-
-      <div class="section-head compact">
-        <h2 data-i18n="optionsPrompt">提示词</h2>
-        <button id="resetPrompt" type="button" class="inline-button" data-i18n="optionsResetPrompt">恢复默认提示词</button>
-      </div>
-
-      <label>
-        <span data-i18n="optionsTranslationPrompt">翻译提示词</span>
-        <textarea id="translationPrompt" rows="6" spellcheck="false"></textarea>
-      </label>
-      <p class="help" data-i18n="optionsPromptHelp">支持 {{sourceLanguage}} 和 {{targetLanguage}} 占位符。</p>
-
-      <label>
-        <span data-i18n="optionsMaxConcurrentBatches">同时翻译段落数</span>
-        <input id="maxConcurrentBatches" type="number" min="1" max="3" step="1">
-        <small class="field-help" data-i18n="optionsMaxConcurrentHelp">建议 2；接口稳定时可设为 3。</small>
-      </label>
-
-      <div class="section-head compact">
-        <h2 data-i18n="optionsMaintenanceActions">维护操作</h2>
-        <span>Storage</span>
-      </div>
-      <div class="maintenance-actions" aria-label="维护操作" data-i18n-aria-label="optionsMaintenanceActions">
-        <button id="clearCache" type="button" class="secondary danger" data-i18n="optionsClearCache">清空缓存</button>
-        <button id="reset" type="button" class="secondary danger" data-i18n="optionsResetAll">恢复全部默认设置</button>
-      </div>
-
-      <p class="privacy-note" data-i18n="optionsPrivacyNote">API Key 保存在本机扩展存储中；网页文本只会发送到你配置的接口。</p>
-    </details>
-  </main>
-  <script src="shared.js"></script>
-  <script src="options.js"></script>
-</body>
+        <footer>
+          <button id="save" class="primary" type="submit" disabled>설정 저장</button>
+          <p id="status" role="status" aria-live="polite"></p>
+        </footer>
+      </form>
+      <dialog id="welcome" aria-labelledby="welcomeTitle">
+        <h2 id="welcomeTitle">ChatGPT 플랜을 사용합니다</h2>
+        <p>DualRead의 구독 연결 번역은 내 ChatGPT 플랜 사용량에 포함됩니다. ChatGPT 설정에서 사용량을 확인할 수 있습니다.</p>
+        <form method="dialog"><button class="primary">확인</button></form>
+      </dialog>
+    </main>
+  </body>
 </html>

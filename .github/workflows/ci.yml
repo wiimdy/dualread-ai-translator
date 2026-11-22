@@ -1,83 +1,23 @@
-name: CI
-
+name: Personal translator
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  audit-and-unit:
-    name: Publication audit and unit tests
-    runs-on: ubuntu-latest
+  verify:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Publication audit and syntax check
-        run: npm run check
-
-      - name: Shared helper tests
-        run: npm run test:shared
-
-      - name: Background tests
-        run: npm run test:background
-
-      - name: Study mode helper tests
-        run: npm run test:study
-
-      - name: Sample configuration tests
-        run: npm run test:samples:config
-
-  browser:
-    name: Browser fixtures and extension smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      # 扩展 smoke 必须加载真实 MV3 扩展，只能以有界面模式运行，CI 上用 xvfb 提供显示。
-      - name: Popup and options fixtures
-        run: xvfb-run --auto-servernum npm run test:ui
-
-      - name: Content script fixtures
-        run: xvfb-run --auto-servernum npm run test:local
-
-      - name: Layout regression matrix
-        run: xvfb-run --auto-servernum npm run test:layout
-
-      - name: Extension smoke
-        run: xvfb-run --auto-servernum npm run test:smoke
-
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v5
-        with:
-          name: browser-test-results
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 7
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm exec -w dualread-personal -- playwright-core install chromium
+      - run: npm test
+      - run: git diff --exit-code

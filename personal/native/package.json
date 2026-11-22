@@ -1,0 +1,26 @@
+{
+  "name": "dualread-personal-native",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "node --check install.mjs && node --check build.mjs && node --check test/native.test.mjs && tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.12",
+    "openai": "7.21.0",
+    "proper-lockfile": "4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.5",
+    "@types/proper-lockfile": "4.1.4",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
+}
