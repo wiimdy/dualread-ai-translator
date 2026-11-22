@@ -10,6 +10,6 @@ await Promise.all([
 ]);
 
 // The fork's repository root is loadable directly as an unpacked extension.
-const entryFiles = ['manifest.json', 'background.js', 'routing.js', 'page.js', 'popup.js',
+const entryFiles = ['manifest.json', 'background.js', 'routing.js', 'translation-prompt.js', 'page.js', 'popup.js',
   'popup.html', 'options.js', 'options.html', 'ui.css'];
 await Promise.all(entryFiles.map((file) => cp(source('../dist/' + file), source('../../' + file))));

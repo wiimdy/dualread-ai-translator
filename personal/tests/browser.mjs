@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { mockTranslator, shortcutHtml, shortcutPagePath, verifyPageShortcuts } from './page-shortcuts.mjs';
 
 const extensionDirectory = process.env.EXTENSION_DIR
   ? resolve(process.env.EXTENSION_DIR)
@@ -35,19 +36,25 @@ const waitOptions = { polling: 50, timeout: 6_000 };
 
 const run = async () => {
   const calls = [];
+  const prefix = translated + ' ';
+  const mock = mockTranslator(prefix);
   const server = createServer(async (request, response) => {
-    if (request.method === 'GET' && request.url === pagePath) {
+    const pathname = request.url.split('?')[0];
+    if (request.method === 'GET' && [pagePath, shortcutPagePath].includes(pathname)) {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': 'fixture=PRIVATE_COOKIE',
-      }).end(body);
+      }).end(pathname === pagePath ? body : shortcutHtml);
       return;
     }
     if (request.method === 'POST' && request.url === '/v1/chat/completions') {
       let payload = '';
       for await (const chunk of request) payload += chunk;
-      calls.push({ body: JSON.parse(payload), headers: request.headers });
+      const body = JSON.parse(payload);
+      const decoded = mock.decode(body);
+      calls.push({ body, headers: request.headers, sources: decoded.sources });
+      const content = await mock.complete(decoded);
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ choices: [{ message: { content: translated } }] }));
+      response.end(JSON.stringify({ choices: [{ message: { content } }] }));
       return;
     }
     response.writeHead(404).end();
@@ -98,6 +105,8 @@ const run = async () => {
             globalThis.nativeTestCalls.push({ host, message });
             if (message.action === 'status') {
               queueMicrotask(() => onMessage({ ok: true, connected: true }));
+            } else if (message.action === 'translate-batch') {
+              queueMicrotask(() => onMessage({ ok: true, translations: message.texts.map(() => translation) }));
             } else if (message.action === 'translate') {
               queueMicrotask(() => onMessage({ ok: true, translation }));
             } else {
@@ -139,7 +148,7 @@ const run = async () => {
         popup.document.getElementById(buttonId).click();
         return prior;
       }, id);
-      if (id !== 'pick') {
+      if (!['pick', 'all'].includes(id)) {
         await options.waitForFunction(({ id: buttonId, before: previous }) => {
           const popup = chrome.extension.getViews({ type: 'popup' })[0];
           return popup && !popup.document.getElementById(buttonId).disabled &&
@@ -184,6 +193,17 @@ const run = async () => {
     assert.equal(calls.length, 0);
     await command('clear');
     assert.equal(await article.locator(translatedBlock).count(), 0);
+
+    await command('all');
+    await article.waitForFunction((selector) => document.querySelectorAll(selector).length >= 3, translatedBlock);
+    const planCalls = (await nativeCalls()).filter(({ message }) => message.action.startsWith('translate'));
+    const planBatch = planCalls.find(({ message }) => message.action === 'translate-batch');
+    assert.equal(planBatch?.host, 'dev.dualread.personal');
+    assert.equal(planBatch.message.language, '한국어');
+    assert.ok(planBatch.message.texts.length > 1);
+    await command('all');
+    await article.waitForFunction(() => !document.querySelector('.llm-bilingual-translation'));
+    assert.equal(calls.length, 0);
 
     // Chrome's own site settings preapprove only this disposable mock endpoint.
     const permissions = await context.newPage();
@@ -244,9 +264,10 @@ const run = async () => {
     assert.ok(!selectionPayload.includes(original));
     for (const token of excluded) assert.ok(!selectionPayload.includes(token), `Unexpected selection context ${token}`);
     const allNative = await nativeCalls();
-    assert.equal(allNative.filter(({ message }) => message.action === 'translate').length, 1);
+    assert.deepEqual(allNative.filter(({ message }) => message.action.startsWith('translate')), planCalls);
     assert.deepEqual(await worker.evaluate(() => globalThis.testRequests),
       [`${endpoint}/chat/completions`, `${endpoint}/chat/completions`]);
+    await verifyPageShortcuts({ context, worker, origin: new URL(articleUrl).origin, calls, mock, prefix });
     console.log('Chrome UI passed: default plan stub, opt-in paragraph and selection, bilingual rendering, deduplication, clear, and data exclusions. Only the loopback provider received HTTP translation requests.');
   } finally {
     await context?.close();

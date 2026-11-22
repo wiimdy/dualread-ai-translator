@@ -43,6 +43,7 @@ button:disabled { opacity: .58; cursor: wait; }
 .route { display: grid; gap: 2px; padding: 8px 0 15px; overflow-wrap: anywhere; }
 .label, small, details { color: var(--muted); }
 .label, small, .route a { font-size: 12px; }
+.actions kbd { font: inherit; font-size: .85em; margin-inline-start: .4em; }
 .actions, .field { display: grid; gap: 7px; }
 .options main { max-width: 490px; margin: clamp(24px, 7vh, 80px) auto; padding: 0 22px; }
 .options header { margin-bottom: 24px; }

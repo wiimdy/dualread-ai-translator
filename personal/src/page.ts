@@ -4,7 +4,7 @@
   interface Result extends Piece {
     route: RouteVersion;
     node: HTMLSpanElement;
-    observer: MutationObserver;
+    observer?: MutationObserver;
     parent: Element | null;
     done: boolean;
   }
@@ -15,7 +15,6 @@
   if (scope.dualReadPersonalReady) return;
   scope.dualReadPersonalReady = true;
 
-  const MAX_PIECES = 12;
   const MAX_CHARS = 5000;
   const semantic = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,figcaption,dt,dd,td,th,pre,[role="paragraph"]';
   const exclude = ['form', 'input', 'select', 'textarea', 'button', 'script', 'style', 'template',
@@ -23,6 +22,15 @@
     'nav', 'menu', '[role="menu"]', '[role="menuitem"]', '[role="menubar"]', '[role="toolbar"]', '[role="button"]',
     '[hidden]', '[inert]', '[aria-hidden="true" i]', '.llm-bilingual-translation', '.llm-bilingual-page-notice',
     '.sr-only', '.visually-hidden', '.screen-reader-only'].join(',');
+  const pageExclude = ['input', 'select', 'textarea', 'option', 'datalist', 'output', 'script', 'style', 'template',
+    'noscript', 'iframe', 'svg', 'canvas', '[contenteditable]', '[role="textbox"]', '[role="searchbox"]',
+    '[role="combobox"]', '[hidden]', '[inert]', '[aria-hidden="true" i]', '.llm-bilingual-translation',
+    '.llm-bilingual-page-notice', '.sr-only', '.visually-hidden', '.screen-reader-only'].join(',');
+  const inlineLabel = 'a,button,label,summary,[role="button"],[role="menuitem"],[role="tab"]';
+  const MAX_REQUESTS = 3;
+  const BATCH_SIZE = 5;
+  const CACHE_ITEMS = 256;
+  const SCAN_BUDGET_MS = 10;
   const results = new Map<HTMLElement, Result>();
   let notice: HTMLElement | undefined;
   let noticeTimer: number | undefined;
@@ -59,7 +67,14 @@
     return element.closest<HTMLElement>('a') ?? element;
   };
 
-  const isPainted = (range: Range, parent: HTMLElement, anchor: HTMLElement): boolean => {
+  const pageAnchor = (parent: HTMLElement): HTMLElement | null => {
+    const label = parent.closest<HTMLElement>(inlineLabel);
+    const paragraph = parent.closest(semantic);
+    if (label && (!paragraph || !paragraph.contains(label) || !label.matches('a'))) return label;
+    return anchorFor(parent);
+  };
+
+  const isPainted = (range: Range, parent: HTMLElement, anchor: HTMLElement, page: boolean): boolean => {
     let box = parent;
     while (box.parentElement && getComputedStyle(box).display === 'contents') box = box.parentElement;
     if (!box.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
@@ -77,10 +92,14 @@
     for (let el: HTMLElement | null = parent; el; el = el.parentElement) {
       const style = getComputedStyle(el);
       if (style.clip !== 'auto' || style.clipPath !== 'none') return false;
+      const xScrollable = page && /^(auto|scroll|overlay)$/.test(style.overflowX);
+      const yScrollable = page && /^(auto|scroll|overlay)$/.test(style.overflowY);
+      if (xScrollable) { left -= Math.abs(el.scrollLeft); right += el.scrollWidth - el.clientWidth; }
+      if (yScrollable) { top -= el.scrollTop; bottom += el.scrollHeight - el.clientHeight; }
       if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
       const rect = el.getBoundingClientRect();
-      if (style.overflowX !== 'visible') { left = Math.max(left, rect.left); right = Math.min(right, rect.right); }
-      if (style.overflowY !== 'visible') { top = Math.max(top, rect.top); bottom = Math.min(bottom, rect.bottom); }
+      if (!xScrollable && style.overflowX !== 'visible') { left = Math.max(left, rect.left); right = Math.min(right, rect.right); }
+      if (!yScrollable && style.overflowY !== 'visible') { top = Math.max(top, rect.top); bottom = Math.min(bottom, rect.bottom); }
     }
     return Array.from(range.getClientRects()).some((rect) =>
       Math.min(rect.right, right) > Math.max(rect.left, left) &&
@@ -88,15 +107,17 @@
   };
 
   // The click path walks one block. The selection path prunes everything outside the explicit range.
-  const extract = (range: Range, picked?: HTMLElement): Piece[] => {
+  const extract = (range: Range, picked?: HTMLElement, page = false): Piece[] => {
+    const excluded = page ? pageExclude : exclude;
     const root = range.commonAncestorContainer;
     if (!document.body?.contains(root) || document.designMode === 'on') return [];
     const parts = new Map<HTMLElement, string>();
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
-        if (node instanceof Element && node.matches(exclude)) return NodeFilter.FILTER_REJECT;
+        if (node instanceof Element && node.matches(excluded)) return NodeFilter.FILTER_REJECT;
         if (node instanceof Element && picked && node.matches(semantic) && node !== picked) return NodeFilter.FILTER_REJECT;
+        if (page && picked && node instanceof HTMLElement && pageAnchor(node) !== picked) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
     });
@@ -104,8 +125,8 @@
     let node: Node | null = root instanceof Text ? root : walker.nextNode();
     while (node) {
       const parent = node.parentElement;
-      if (parent && !parent.closest(exclude) && (node instanceof Text || node instanceof HTMLBRElement)) {
-        const anchor = anchorFor(parent);
+      if (parent && !parent.closest(excluded) && (node instanceof Text || node instanceof HTMLBRElement)) {
+        const anchor = page ? pageAnchor(parent) : anchorFor(parent);
         if (anchor && (!picked || anchor === picked)) {
           if (node instanceof HTMLBRElement && parts.has(anchor)) {
             parts.set(anchor, parts.get(anchor) + '\n');
@@ -114,13 +135,11 @@
             const end = range.endContainer === node ? range.endOffset : node.length;
             segment.setStart(node, begin);
             segment.setEnd(node, end);
-            if (isPainted(segment, parent, anchor)) {
+            if (isPainted(segment, parent, anchor, page)) {
               const piece = node.data.slice(begin, end);
               if (piece.trim() || parts.has(anchor)) {
                 const text = (parts.get(anchor) ?? '') + piece;
-                if (text.trim().length > MAX_CHARS) throw new Error('문단당 5,000자까지 번역합니다. 원하는 부분만 드래그해 주세요.');
                 parts.set(anchor, text);
-                if (parts.size > MAX_PIECES) throw new Error('한 번에 12개 문단까지 선택해 주세요.');
               }
             }
           }
@@ -133,15 +152,15 @@
 
   const selectionPieces = (): Piece[] => {
     const selection = window.getSelection();
-    if (!selection?.rangeCount || selection.isCollapsed || document.activeElement?.closest(exclude)) return [];
-    return extract(selection.getRangeAt(0));
+    if (!selection?.rangeCount || selection.isCollapsed || document.activeElement?.closest(pageExclude)) return [];
+    return extract(selection.getRangeAt(0), undefined, true);
   };
 
   // Keep DualRead's inside/after contract. A child also stays below its source in a row or grid.
   const place = (item: Result): void => {
     const { anchor, node } = item;
     if (!anchor.isConnected) {
-      item.observer.disconnect();
+      item.observer?.disconnect();
       node.remove();
       results.delete(anchor);
       return;
@@ -152,13 +171,13 @@
     const inside = anchor === document.body || scope.LLMTranslatorShared.getTranslationPlacement(anchor.tagName) === 'inside' || horizontal;
     if (inside && node.parentElement !== anchor) anchor.append(node);
     if (!inside && anchor.nextElementSibling !== node) anchor.after(node);
-    if (parent && parent !== item.parent) {
-      item.observer.disconnect();
+    if (item.observer && parent && parent !== item.parent) {
+      item.observer?.disconnect();
       item.observer.observe(parent, { childList: true });
       item.parent = parent;
     }
   };
-  const resultFor = (piece: Piece, route: RouteVersion): Result => {
+  const resultFor = (piece: Piece, route: RouteVersion, page = false): Result => {
     const previous = results.get(piece.anchor);
     if (previous) {
       previous.text = piece.text;
@@ -174,12 +193,42 @@
       display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'normal 1rem/1.55 system-ui',
       margin: '0.3em 0 0.7em', paddingInlineStart: '0.7em', borderInlineStart: '2px solid #409684',
     });
-    const item: Result = { ...piece, route, node, done: false, parent: null, observer: new MutationObserver((changes) => {
+    const item: Result = { ...piece, route, node, done: false, parent: null, observer: page ? undefined : new MutationObserver((changes) => {
       if (changes.some((change) => Array.from(change.removedNodes).includes(piece.anchor))) place(item);
     }) };
     results.set(piece.anchor, item);
     place(item);
     return item;
+  };
+
+  const chunksFor = (text: string): string[] => {
+    const chunks: string[] = [];
+    let start = 0;
+    while (text.length - start > MAX_CHARS) {
+      const limit = start + MAX_CHARS;
+      let end = limit;
+      while (end > start + MAX_CHARS / 2 && !/\s/u.test(text[end - 1])) end--;
+      if (end <= start + MAX_CHARS / 2) end = limit;
+      if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+      chunks.push(text.slice(start, end));
+      start = end;
+    }
+    chunks.push(text.slice(start));
+    return chunks;
+  };
+
+  const requestOne = async (text: string, route: RouteVersion, active: () => boolean): Promise<string> => {
+    let output = '';
+    for (const chunk of chunksFor(text)) {
+      if (!active()) return '';
+      if (!chunk.trim()) { output += chunk; continue; }
+      const reply = await chrome.runtime.sendMessage({ type: 'personal-translate', text: chunk, routeVersion: route });
+      if (reply?.ok !== true || typeof reply.translation !== 'string' || !reply.translation.trim()) {
+        throw new Error(typeof reply?.error === 'string' ? reply.error : '번역 응답이 비어 있습니다.');
+      }
+      output += chunk.match(/^\s*/u)![0] + reply.translation.trim() + chunk.match(/\s*$/u)![0];
+    }
+    return output;
   };
 
   const translate = async (pieces: Piece[], route: RouteVersion): Promise<number> => {
@@ -190,22 +239,20 @@
     let count = 0;
     try {
       for (const piece of pieces) {
-        if (token !== running || !piece.anchor.isConnected) break;
+        if (token !== running) break;
+        if (!piece.anchor.isConnected) continue;
         const prev = results.get(piece.anchor);
         if (prev?.done && prev.node.isConnected && prev.text === piece.text && prev.route === route) { place(prev); continue; }
         const item = resultFor(piece, route);
         item.node.className = 'llm-bilingual-translation is-loading';
         item.node.textContent = '번역 중…';
         try {
-          const reply = await chrome.runtime.sendMessage({ type: 'personal-translate', text: piece.text, routeVersion: route });
+          const translated = await requestOne(piece.text, route, () => token === running);
           if (token !== running) break;
-          if (reply?.ok !== true || typeof reply.translation !== 'string' || !reply.translation.trim()) {
-            throw new Error(typeof reply?.error === 'string' ? reply.error : '번역 응답이 비어 있습니다.');
-          }
           place(item);
           if (!piece.anchor.isConnected) continue;
           item.node.className = 'llm-bilingual-translation is-done';
-          item.node.textContent = reply.translation;
+          item.node.textContent = translated;
           item.done = true;
           count++;
         } catch (error: unknown) {
@@ -220,6 +267,261 @@
     } finally {
       if (running === token) running = undefined;
     }
+  };
+
+  let stopPage: (() => void) | undefined;
+
+  const pageCache = new Map<string, string>();
+  let cachedRoute: RouteVersion | undefined;
+  const remember = (text: string, translation: string): void => {
+    if (text.length > MAX_CHARS || translation.length > MAX_CHARS * 4) return;
+    pageCache.delete(text);
+    pageCache.set(text, translation);
+    if (pageCache.size > CACHE_ITEMS) pageCache.delete(pageCache.keys().next().value!);
+  };
+  const startPage = (route: RouteVersion): void => {
+    if (route !== cachedRoute) { pageCache.clear(); cachedRoute = route; }
+    const tracked = new Set<HTMLElement>();
+    const nearby = new Set<HTMLElement>();
+    const desired = new Map<HTMLElement, string>();
+    const subscribers = new Map<string, Set<HTMLElement>>();
+    const waiting = new Set<string>();
+    const dirty = new Set<HTMLElement>();
+    const roots = new Set<HTMLElement>();
+    let walker: TreeWalker | undefined;
+    let scanTimer: number | undefined;
+    let active = true;
+    let failed = false;
+    let first = true;
+    let requests = 0;
+    let singleOnly = false;
+
+    const onScreen = (anchor: HTMLElement): boolean => {
+      const rect = anchor.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
+    };
+    const removeResult = (anchor: HTMLElement): void => {
+      const item = results.get(anchor);
+      if (!item) return;
+      item.observer?.disconnect();
+      item.node.remove();
+      results.delete(anchor);
+    };
+    const unsubscribe = (anchor: HTMLElement): void => {
+      const old = desired.get(anchor);
+      desired.delete(anchor);
+      if (!old) return;
+      const anchors = subscribers.get(old);
+      anchors?.delete(anchor);
+      if (!anchors?.size && waiting.delete(old)) subscribers.delete(old);
+    };
+    const render = (anchor: HTMLElement, source: string, translation: string): void => {
+      if (!active || !anchor.isConnected || desired.get(anchor) !== source || anchor.closest(pageExclude)) return;
+      const item = resultFor({ anchor, text: source }, route, true);
+      item.node.className = 'llm-bilingual-translation is-done';
+      item.node.textContent = translation;
+      item.done = true;
+    };
+    const refresh = (anchor: HTMLElement): void => {
+      let text = '';
+      if (anchor.isConnected && !anchor.closest(pageExclude)) {
+        const range = document.createRange();
+        range.selectNodeContents(anchor);
+        text = extract(range, anchor, true)[0]?.text ?? '';
+      }
+      if (desired.get(anchor) === text && text) {
+        const item = results.get(anchor);
+        if (item?.done && item.text === text && !item.node.isConnected) place(item);
+        return;
+      }
+      unsubscribe(anchor);
+      if (!text) { removeResult(anchor); return; }
+      desired.set(anchor, text);
+      const current = results.get(anchor);
+      if (current?.done && current.text === text && current.route === route) {
+        remember(text, current.node.textContent ?? '');
+        place(current);
+        return;
+      }
+      removeResult(anchor);
+      const cached = pageCache.get(text);
+      if (cached !== undefined) { render(anchor, text, cached); return; }
+      const anchors = subscribers.get(text);
+      if (anchors) anchors.add(anchor);
+      else { subscribers.set(text, new Set([anchor])); waiting.add(text); }
+    };
+    const next = (): string | undefined => {
+      for (const text of waiting) {
+        const anchors = subscribers.get(text);
+        if (anchors && Array.from(anchors).some(onScreen)) return text;
+      }
+      return waiting.values().next().value;
+    };
+    const fetchGroup = async (texts: string[]): Promise<void> => {
+      let translations: string[];
+      if (texts.length === 1) translations = [await requestOne(texts[0], route, () => active && !failed)];
+      else {
+        const reply = await chrome.runtime.sendMessage({ type: 'personal-translate-batch', texts, routeVersion: route });
+        const malformed = reply?.code === 'INVALID_BATCH_OUTPUT' || (reply?.ok === true &&
+          (!Array.isArray(reply.translations) || reply.translations.length !== texts.length ||
+            !reply.translations.every((value: unknown) => typeof value === 'string' && value.trim())));
+        if (malformed) {
+          singleOnly = true;
+          if (active && !failed) for (const text of texts) if (subscribers.get(text)?.size) waiting.add(text);
+          return;
+        }
+        if (!reply?.ok) throw new Error(typeof reply?.error === 'string' ? reply.error : '서버에서 문단별 번역을 받지 못했습니다.');
+        translations = reply.translations;
+      }
+      if (!active) return;
+      texts.forEach((text, index) => {
+        remember(text, translations[index]);
+        for (const anchor of subscribers.get(text) ?? []) render(anchor, text, translations[index]);
+        subscribers.delete(text);
+      });
+    };
+    const pump = (): void => {
+      while (active && !failed && requests < MAX_REQUESTS && waiting.size) {
+        const texts: string[] = [];
+        let length = 0;
+        while (texts.length < (first || singleOnly ? 1 : BATCH_SIZE)) {
+          const text = next();
+          if (text === undefined || (texts.length && length + text.length > MAX_CHARS)) break;
+          waiting.delete(text);
+          texts.push(text);
+          length += text.length;
+        }
+        first = false;
+        requests++;
+        void fetchGroup(texts).catch((error: unknown) => {
+          if (!active || failed) return;
+          failed = true;
+          notify(error instanceof Error ? error.message : '페이지를 번역하지 못했습니다.');
+        }).finally(() => { requests--; pump(); });
+      }
+    };
+    const schedule = (): void => {
+      if (active && scanTimer === undefined) scanTimer = window.setTimeout(scan, 0);
+    };
+    const visibility = new IntersectionObserver((entries) => {
+      if (!active) return;
+      const visibleFirst = entries.filter((entry) => entry.isIntersecting && onScreen(entry.target as HTMLElement));
+      for (const { target, isIntersecting } of [...visibleFirst, ...entries]) {
+        const anchor = target as HTMLElement;
+        if (isIntersecting) { nearby.add(anchor); dirty.add(anchor); }
+        else nearby.delete(anchor);
+      }
+      schedule();
+    }, { rootMargin: innerHeight * 2 + 'px 0px' });
+    const track = (element: HTMLElement): void => {
+      const anchor = pageAnchor(element);
+      if (!anchor || anchor === document.documentElement) return;
+      if (!tracked.has(anchor)) { tracked.add(anchor); visibility.observe(anchor); }
+    };
+    const makeWalker = (root: HTMLElement): TreeWalker => document.createTreeWalker(root,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (node instanceof Element) return node.matches(pageExclude) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+          return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+        },
+      });
+    // Discovery and layout reads yield between slices, even on a very long document.
+    function scan(): void {
+      scanTimer = undefined;
+      if (!active || failed) return;
+      const deadline = performance.now() + SCAN_BUDGET_MS;
+      do {
+        const anchor = dirty.values().next().value;
+        if (anchor) {
+          dirty.delete(anchor);
+          if (nearby.has(anchor)) refresh(anchor);
+          if (first && waiting.size && onScreen(anchor)) pump();
+          continue;
+        }
+        if (!walker) {
+          const root = roots.values().next().value;
+          if (!root) break;
+          roots.delete(root);
+          if (!root.isConnected || root.closest(pageExclude)) continue;
+          walker = makeWalker(root);
+        }
+        const text = walker.nextNode();
+        if (!text) walker = undefined;
+        else if (text.parentElement) track(text.parentElement);
+      } while (performance.now() < deadline);
+      // During first discovery at a deep scroll position, wait for an on-screen
+      // source before spending the first request on a look-ahead block.
+      if (!first || (!walker && !roots.size && !dirty.size)) pump();
+      if (walker || roots.size || dirty.size) schedule();
+    }
+    const forget = (anchor: HTMLElement): void => {
+      tracked.delete(anchor);
+      visibility.unobserve(anchor);
+      nearby.delete(anchor);
+      dirty.delete(anchor);
+      unsubscribe(anchor);
+      removeResult(anchor);
+    };
+    const changed = new MutationObserver((records) => {
+      if (!active || failed) return;
+      let removals = false;
+      for (const record of records) {
+        const element = record.target instanceof HTMLElement ? record.target : record.target.parentElement;
+        if (!element || element.closest('.llm-bilingual-translation,.llm-bilingual-page-notice')) continue;
+        if (record.type === 'attributes') {
+          roots.add(element);
+          // A visibility or editable-state change can affect old results anywhere in this branch.
+          for (const anchor of tracked) {
+            if (element === anchor || element.contains(anchor)) {
+              if (anchor.closest(pageExclude)) forget(anchor);
+              else if (nearby.has(anchor)) dirty.add(anchor);
+            }
+          }
+        } else if (record.type === 'childList') {
+          const ours = (node: Node): boolean => node instanceof Element &&
+            node.matches('.llm-bilingual-translation,.llm-bilingual-page-notice');
+          const added = Array.from(record.addedNodes).filter((node) => !ours(node));
+          const removed = Array.from(record.removedNodes).filter((node) => !ours(node));
+          if (!added.length && !removed.length) continue;
+          if (removed.length) removals = true;
+          for (const node of added) {
+            if (node instanceof HTMLElement) roots.add(node);
+            else if (node instanceof Text && node.data.trim() && !element.closest(pageExclude)) track(element);
+          }
+        } else if (!element.closest(pageExclude)) track(element);
+        const anchor = pageAnchor(element);
+        if (anchor && nearby.has(anchor)) dirty.add(anchor);
+      }
+      if (removals) for (const anchor of tracked) if (!anchor.isConnected) forget(anchor);
+      if (dirty.size || roots.size) schedule();
+    });
+    changed.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true,
+      attributeFilter: ['hidden', 'inert', 'aria-hidden', 'contenteditable', 'class', 'style', 'open'] });
+    // Seed a few visible anchors immediately, including when activation happens halfway down the page.
+    const body = document.body;
+    if (body && document.designMode !== 'on') {
+      for (const y of [0.12, 0.4, 0.7]) {
+        for (const x of [0.25, 0.55]) {
+          const element = document.elementFromPoint(innerWidth * x, innerHeight * y);
+          if (!(element instanceof HTMLElement) || element.closest(pageExclude)) continue;
+          const anchor = pageAnchor(element);
+          if (!anchor || anchor === body || anchor.childElementCount > 8 || !anchor.firstChild ||
+              !anchor.firstChild.textContent?.trim() || anchor.querySelector('p,div,section,article,li,table')) continue;
+          track(element); nearby.add(anchor); dirty.add(anchor);
+        }
+      }
+      roots.add(body);
+      schedule();
+    }
+    stopPage = () => {
+      active = false;
+      window.clearTimeout(scanTimer);
+      visibility.disconnect();
+      changed.disconnect();
+      waiting.clear();
+      subscribers.clear();
+      stopPage = undefined;
+    };
   };
 
   const stopPick = (): void => {
@@ -262,20 +564,30 @@
   };
 
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
-    if (sender.id !== chrome.runtime.id || !['personal-pick', 'personal-selected', 'personal-clear'].includes(message?.type)) return;
-    if (message.type === 'personal-clear') {
+    if (sender.id !== chrome.runtime.id || !['personal-pick', 'personal-selected', 'personal-all', 'personal-clear'].includes(message?.type)) return;
+    if (message.type === 'personal-clear' || (message.type === 'personal-all' && stopPage)) {
+      stopPage?.();
+      if (message.type === 'personal-clear') pageCache.clear();
       generation++;
       stopPick();
       running = undefined;
       const count = results.size;
-      for (const item of results.values()) { item.observer.disconnect(); item.node.remove(); }
+      for (const item of results.values()) { item.observer?.disconnect(); item.node.remove(); }
       results.clear();
-      respond({ ok: true, count });
+      respond({ ok: true, count, active: false });
       return;
     }
     const route = message.routeVersion;
     if (!(typeof route === 'string' && route.length > 0) && !(typeof route === 'number' && Number.isFinite(route))) {
       respond({ ok: false, error: '설정을 확인하고 다시 시도해 주세요.' });
+      return;
+    }
+    if (message.type === 'personal-all') {
+      stopPick();
+      generation++;
+      running = undefined;
+      startPage(route);
+      respond({ ok: true, active: true });
       return;
     }
     if (message.type === 'personal-pick') {

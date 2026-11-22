@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "DualRead 개인 번역기",
-  "description": "직접 고른 문단을 ChatGPT 구독 또는 지정한 서버로 번역하고 원문 아래에 표시합니다.",
-  "version": "0.13.2",
+  "description": "페이지 전체 또는 드래그한 글을 ChatGPT 구독이나 지정한 서버로 번역해 원문 아래에 표시합니다.",
+  "version": "0.13.3",
   "minimum_chrome_version": "120",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAl3KaYueQmqNRFFfAH+z/Om31xiYj0TqEIha0bwqPShBXF223RHalyyEvh1gJRVJa091VodaZhYyWXyO6vjEysrSHbXxdUKM325D9aFAOAox0xMKDKoa67/EVXwp2Equ6FJ6f3M7LN+6S7mlST7Hju+VtW6kGhJIlVAF8qUNPSCjjMrr7/x1NYqRMZLVL9MyK5qRBAlP63AkmhFwIddPZRGhabsKnt4sodaTordK3TArP46L+pMQh7f1lW9dOoy+QwM/BG/dOWTm1bSrRyq3ErPTjXicAqUiTv4EbsRfX4wuPBXD5W5R1PW7pPlYxdxyWWhKNYqQX9XNiCiLJmGvbuwIDAQAB",
   "icons": {
@@ -36,6 +36,20 @@
     "open_in_tab": true
   },
   "commands": {
+    "translate-page": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "페이지 전체 번역 켜기·끄기"
+    },
+    "translate-selection": {
+      "suggested_key": {
+        "default": "Alt+C",
+        "mac": "Alt+C"
+      },
+      "description": "드래그한 글만 번역"
+    },
     "pick-paragraph": {
       "suggested_key": {
         "default": "Alt+Shift+T"

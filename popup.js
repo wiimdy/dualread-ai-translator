@@ -1,3 +1,4 @@
+const all = document.querySelector('#all');
 const pick = document.querySelector('#pick');
 const selected = document.querySelector('#selected');
 const clear = document.querySelector('#clear');
@@ -11,12 +12,23 @@ const showStatus = (message, error = false) => {
     status.dataset.error = String(error);
 };
 const setBusy = (busy) => {
+    all.disabled = busy || !version;
     pick.disabled = busy || !version;
     selected.disabled = busy || !version;
     clear.disabled = busy;
 };
 const load = async () => {
-    const state = await chrome.runtime.sendMessage({ type: 'personal-state' });
+    const [state, commands] = await Promise.all([
+        chrome.runtime.sendMessage({ type: 'personal-state' }),
+        chrome.commands.getAll(),
+    ]);
+    const shortcutHelp = document.getElementById('shortcut-help');
+    for (const [commandName, id] of [['translate-page', 'all-shortcut'], ['translate-selection', 'selection-shortcut']]) {
+        const shortcut = commands.find((command) => command.name === commandName)?.shortcut || '';
+        document.getElementById(id).textContent = shortcut;
+        if (!shortcut)
+            shortcutHelp.hidden = false;
+    }
     if (!state?.ok || !state.routeVersion)
         throw new Error(state?.error || '번역 설정을 불러올 수 없습니다.');
     version = state.routeVersion;
@@ -41,7 +53,7 @@ const run = async (action) => {
         const reply = await chrome.tabs.sendMessage(tab.id, { type: `personal-${action}`, routeVersion: version });
         if (!reply?.ok)
             throw new Error(reply?.error || '페이지에서 응답을 받지 못했습니다.');
-        if (action === 'pick') {
+        if (action === 'pick' || action === 'all') {
             window.close();
         }
         else if (reply.message) {
@@ -61,6 +73,7 @@ const run = async (action) => {
         setBusy(false);
     }
 };
+all.addEventListener('click', () => void run('all'));
 pick.addEventListener('click', () => void run('pick'));
 selected.addEventListener('click', () => void run('selected'));
 clear.addEventListener('click', () => void run('clear'));

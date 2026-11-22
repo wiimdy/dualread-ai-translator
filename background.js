@@ -1,4 +1,5 @@
-import { isRecord, nativeRequest, readRoute, saveRoute, translate } from './routing.js';
+import { isRecord, nativeRequest, readRoute, saveRoute, translate, translateBatch } from './routing.js';
+import { INVALID_BATCH_OUTPUT } from './translation-prompt.js';
 const isOwnView = (sender, page) => sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL(page);
 const dispatch = async (msg, sender) => {
     const options = isOwnView(sender, 'options.html');
@@ -20,8 +21,11 @@ const dispatch = async (msg, sender) => {
         }
         return { ok: true, connected: reply.connected === true };
     }
-    if (msg.type === 'personal-translate' && sender.id === chrome.runtime.id &&
+    if ((msg.type === 'personal-translate' || msg.type === 'personal-translate-batch') && sender.id === chrome.runtime.id &&
         sender.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//i.test(sender.url ?? '')) {
+        if (msg.type === 'personal-translate-batch') {
+            return { ok: true, translations: await translateBatch(msg.texts, msg.routeVersion) };
+        }
         return { ok: true, translation: await translate(msg.text, msg.routeVersion) };
     }
     throw new Error('허용되지 않은 요청입니다.');
@@ -29,7 +33,11 @@ const dispatch = async (msg, sender) => {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!isRecord(message) || typeof message.type !== 'string' || !message.type.startsWith('personal-'))
         return;
-    void dispatch(message, sender).then(respond, (error) => respond({ ok: false, error: error instanceof Error ? error.message : '요청을 처리할 수 없습니다.' }));
+    void dispatch(message, sender).then(respond, (error) => {
+        const detail = error instanceof Error ? error.message : '요청을 처리할 수 없습니다.';
+        const code = message.type === 'personal-translate-batch' && detail === INVALID_BATCH_OUTPUT ? 'INVALID_BATCH_OUTPUT' : undefined;
+        respond({ ok: false, error: detail, code });
+    });
     return true;
 });
 const launch = async (tabId, type) => {
@@ -61,6 +69,17 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     }
 });
 chrome.commands.onCommand.addListener((command, tab) => {
-    if (command === 'pick-paragraph' && tab?.id !== undefined)
-        void launch(tab.id, 'personal-pick');
+    if (tab?.id === undefined)
+        return;
+    switch (command) {
+        case 'translate-page':
+            void launch(tab.id, 'personal-all');
+            break;
+        case 'translate-selection':
+            void launch(tab.id, 'personal-selected');
+            break;
+        case 'pick-paragraph':
+            void launch(tab.id, 'personal-pick');
+            break;
+    }
 });

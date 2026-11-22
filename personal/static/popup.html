@@ -16,10 +16,12 @@
         <a id="usage" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer" hidden>ChatGPT 사용량 관리</a>
       </div>
       <div class="actions">
-        <button id="pick" class="primary" type="button" disabled>문단 골라 번역</button>
-        <button id="selected" type="button" disabled>선택한 글 번역</button>
+        <button id="all" class="primary" type="button" disabled>페이지 전체 번역 켜기·끄기 <kbd id="all-shortcut"></kbd></button>
+        <button id="selected" type="button" disabled>드래그한 글만 번역 <kbd id="selection-shortcut"></kbd></button>
+        <button id="pick" type="button" disabled>문단 골라 번역</button>
         <button id="clear" type="button" class="quiet">번역 지우기</button>
       </div>
+      <p id="shortcut-help" hidden>표시되지 않은 단축키는 <code>chrome://extensions/shortcuts</code>에서 DualRead에 지정하세요.</p>
       <p id="status" role="status" aria-live="polite"></p>
     </main>
   </body>

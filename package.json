@@ -1,6 +1,6 @@
 {
   "name": "dualread-personal-fork",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "private": true,
   "description": "Personal paragraph translator based on DualRead AI.",
   "engines": { "node": ">=22" },

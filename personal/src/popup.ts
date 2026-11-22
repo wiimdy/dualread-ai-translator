@@ -6,6 +6,7 @@ interface PopupState extends Route {
   connected?: boolean;
 }
 
+const all = document.querySelector<HTMLButtonElement>('#all')!;
 const pick = document.querySelector<HTMLButtonElement>('#pick')!;
 const selected = document.querySelector<HTMLButtonElement>('#selected')!;
 const clear = document.querySelector<HTMLButtonElement>('#clear')!;
@@ -21,13 +22,23 @@ const showStatus = (message: string, error = false): void => {
 };
 
 const setBusy = (busy: boolean): void => {
+  all.disabled = busy || !version;
   pick.disabled = busy || !version;
   selected.disabled = busy || !version;
   clear.disabled = busy;
 };
 
 const load = async (): Promise<void> => {
-  const state: PopupState = await chrome.runtime.sendMessage({ type: 'personal-state' });
+  const [state, commands]: [PopupState, chrome.commands.Command[]] = await Promise.all([
+    chrome.runtime.sendMessage({ type: 'personal-state' }),
+    chrome.commands.getAll(),
+  ]);
+  const shortcutHelp = document.getElementById('shortcut-help')!;
+  for (const [commandName, id] of [['translate-page', 'all-shortcut'], ['translate-selection', 'selection-shortcut']]) {
+    const shortcut = commands.find((command) => command.name === commandName)?.shortcut || '';
+    document.getElementById(id)!.textContent = shortcut;
+    if (!shortcut) shortcutHelp.hidden = false;
+  }
   if (!state?.ok || !state.routeVersion) throw new Error(state?.error || '번역 설정을 불러올 수 없습니다.');
   version = state.routeVersion;
   usage.hidden = state.provider !== 'plan';
@@ -36,7 +47,7 @@ const load = async (): Promise<void> => {
     : `${new URL(state.endpoint).origin} · ${state.model}`;
 };
 
-const run = async (action: 'pick' | 'selected' | 'clear'): Promise<void> => {
+const run = async (action: 'all' | 'pick' | 'selected' | 'clear'): Promise<void> => {
   setBusy(true);
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -49,7 +60,7 @@ const run = async (action: 'pick' | 'selected' | 'clear'): Promise<void> => {
     showStatus(action === 'selected' ? '번역 중…' : '');
     const reply = await chrome.tabs.sendMessage(tab.id, { type: `personal-${action}`, routeVersion: version });
     if (!reply?.ok) throw new Error(reply?.error || '페이지에서 응답을 받지 못했습니다.');
-    if (action === 'pick') {
+    if (action === 'pick' || action === 'all') {
       window.close();
     } else if (reply.message) {
       showStatus(reply.message);
@@ -65,6 +76,7 @@ const run = async (action: 'pick' | 'selected' | 'clear'): Promise<void> => {
   }
 };
 
+all.addEventListener('click', () => void run('all'));
 pick.addEventListener('click', () => void run('pick'));
 selected.addEventListener('click', () => void run('selected'));
 clear.addEventListener('click', () => void run('clear'));

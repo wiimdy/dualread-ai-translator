@@ -31,6 +31,11 @@ test('translation uses a plan-listed text model and passes untrusted text only a
     async streamResponse(request) {
       assert.equal(request.model, 'gpt-6.1-terra');
       assert.deepEqual(request.input, [{ role: 'user', content }]);
+      assert.match(request.instructions, /fluently into Korean/);
+      assert.match(request.instructions, /Do not ask for more context/);
+      assert.match(request.instructions, /If an item should remain untranslated, return it unchanged/);
+      assert.match(request.instructions, /meaning, tone, paragraph structure, and meaningful formatting/);
+      assert.doesNotMatch(request.instructions, /\{\{|\}\}/);
       assert.equal(request.instructions.includes('showAccount'), false);
       assert.equal(JSON.stringify(request).includes('sensitive.invalid'), false);
       assert.equal('tools' in request, false);
@@ -57,6 +62,35 @@ test('validates request size and target before any account or network access', a
   const request = { action: 'translate', text: 'x'.repeat(5000), language: 'ko' };
   const provider = { getSession: async () => signedOut };
   assert.match((await invoke(request, provider)).error, /계정을 연결/);
+});
+
+test('one plan model lookup and one request translate a batch, with strict item matching', async () => {
+  const texts = ['One', 'Two "quoted"\nlines'];
+  const input = { action: 'translate-batch', texts, language: 'ko', url: 'https://private.invalid' };
+  let models = 0;
+  let streams = 0;
+  let output = '[{"id":0,"translation":"첫째"},{"id":1,"translation":"둘째"}]';
+  const client = {
+    getSession: async () => active,
+    listModels: async () => { ++models; return [{ slug: 'gpt-6.1-terra' }]; },
+    async streamResponse(request) {
+      ++streams;
+      assert.equal(request.input.length, 1);
+      assert.equal(request.input[0].role, 'user');
+      assert.deepEqual(JSON.parse(request.input[0].content), texts.map((text, id) => ({ id, text })));
+      assert.match(request.instructions, /JSON array/);
+      assert.ok(!JSON.stringify(request).includes('private.invalid'));
+      return { text: output };
+    },
+  };
+  assert.deepEqual(await invoke(input, client), { ok: true, translations: ['첫째', '둘째'] });
+  assert.equal(models, 1);
+  assert.equal(streams, 1);
+  output = '[{"id":1,"translation":"둘째"},{"id":0,"translation":"첫째"}]';
+  assert.match((await invoke(input, client)).error, /묶음/);
+  assert.equal((await invoke({ ...input, texts: [null] }, client)).ok, false);
+  assert.equal((await invoke({ ...input, texts: ['이'.repeat(3000), '이'.repeat(2001)] }, client)).ok, false);
+  assert.equal(models, 2);
 });
 
 test('honors identity-only consent, reconnect, logout and account errors', async () => {
