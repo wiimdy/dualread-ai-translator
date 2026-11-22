@@ -36,6 +36,7 @@
   let noticeTimer: number | undefined;
   let picking: RouteVersion | undefined;
   let running: symbol | undefined;
+  let preserveSelection: ((piece: Piece) => void) | undefined;
   let generation = 0;
 
   const dismissNotice = (): void => {
@@ -241,6 +242,7 @@
       for (const piece of pieces) {
         if (token !== running) break;
         if (!piece.anchor.isConnected) continue;
+        preserveSelection?.(piece);
         const prev = results.get(piece.anchor);
         if (prev?.done && prev.node.isConnected && prev.text === piece.text && prev.route === route) { place(prev); continue; }
         const item = resultFor(piece, route);
@@ -284,6 +286,7 @@
     const tracked = new Set<HTMLElement>();
     const nearby = new Set<HTMLElement>();
     const desired = new Map<HTMLElement, string>();
+    const manualSources = new WeakMap<HTMLElement, string>();
     const subscribers = new Map<string, Set<HTMLElement>>();
     const waiting = new Set<string>();
     const dirty = new Set<HTMLElement>();
@@ -322,13 +325,21 @@
       item.node.textContent = translation;
       item.done = true;
     };
+    const readSource = (anchor: HTMLElement): string => {
+      if (!anchor.isConnected || anchor.closest(pageExclude)) return '';
+      const range = document.createRange();
+      range.selectNodeContents(anchor);
+      return extract(range, anchor, true)[0]?.text ?? '';
+    };
+    // A pending full-block reply must not overwrite a user's partial selection.
+    preserveSelection = ({ anchor }) => {
+      manualSources.set(anchor, desired.get(anchor) ?? readSource(anchor));
+      unsubscribe(anchor);
+    };
     const refresh = (anchor: HTMLElement): void => {
-      let text = '';
-      if (anchor.isConnected && !anchor.closest(pageExclude)) {
-        const range = document.createRange();
-        range.selectNodeContents(anchor);
-        text = extract(range, anchor, true)[0]?.text ?? '';
-      }
+      const text = readSource(anchor);
+      if (manualSources.get(anchor) === text) return;
+      manualSources.delete(anchor);
       if (desired.get(anchor) === text && text) {
         const item = results.get(anchor);
         if (item?.done && item.text === text && !item.node.isConnected) place(item);
@@ -520,6 +531,7 @@
       changed.disconnect();
       waiting.clear();
       subscribers.clear();
+      preserveSelection = undefined;
       stopPage = undefined;
     };
   };
